@@ -3,11 +3,13 @@ package com.github.bromel777.network
 import cats.Applicative
 import cats.implicits._
 import cats.effect.{Concurrent, Resource, Sync}
+import org.encryfoundation.common.network.BasicMessagesRepo.Handshake
 import com.github.bromel777.network.Network.dummyHandshake
 import com.github.bromel777.utils.Serializer
 import fs2.concurrent.Queue
 import fs2.io.tcp._
 import fs2.Stream
+import com.comcast.ip4s._
 import io.chrisdavenport.log4cats.Logger
 import org.encryfoundation.common.network.BasicMessagesRepo.NetworkMessage
 

@@ -3,7 +3,7 @@ package com.github.bromel777.utils
 import akka.util.ByteString
 import cats.effect.IO
 import com.comcast.ip4s.{Port, SocketAddress}
-import com.github.bromel777.network.Network.protocolToBytes
+//import com.github.bromel777.network.Network.protocolToBytes
 import org.encryfoundation.common.modifiers.history.Header
 import org.encryfoundation.common.network.BasicMessagesRepo.{GeneralizedNetworkMessage, Handshake, InvNetworkMessage, NetworkMessage}
 import org.encryfoundation.common.utils.TaggedTypes.{ModifierId, ModifierTypeId}
