@@ -10,16 +10,19 @@ import com.comcast.ip4s._
 import com.github.bromel777.network.Network.connectToPeers
 import fs2.io.tcp.{Socket, SocketGroup}
 import fs2.{Chunk, Stream}
-import org.encryfoundation.common.network.BasicMessagesRepo.Handshake
+import org.encryfoundation.common.network.BasicMessagesRepo.{GeneralizedNetworkMessage, Handshake}
+import org.encryfoundation.common.utils.Algos
 
 object Network {
 
   val dummyHandshake = Handshake(protocolToBytes("0.9.3"),
     "test node",
     Some(SocketAddress(ipv4"192.168.30.104", Port(1234).get).toInetSocketAddress),
-    System.currentTimeMillis())
+    1575975624532L)
 
-  val peers: List[SocketAddress[Ipv4Address]] = List(SocketAddress(ipv4"172.16.11.11", Port(9040).get))
+  println(Algos.encode(GeneralizedNetworkMessage.toProto(dummyHandshake).toByteArray))
+
+  val peers: List[SocketAddress[Ipv4Address]] = List(SocketAddress(ipv4"0.0.0.0", Port(9040).get))
 
   def protocolToBytes(protocol: String) = protocol.split("\\.").map(elem => elem.toByte)
 

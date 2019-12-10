@@ -3,7 +3,7 @@ package com.github.bromel777.utils
 import cats.effect.Sync
 import com.google.common.primitives.{Bytes, Ints}
 import fs2.{Chunk, Pipe, Pull, Stream}
-import org.encryfoundation.common.network.BasicMessagesRepo.{GeneralizedNetworkMessage, NetworkMessage}
+import org.encryfoundation.common.network.BasicMessagesRepo.{GeneralizedNetworkMessage, Handshake, NetworkMessage}
 import cats.implicits._
 import com.typesafe.scalalogging.StrictLogging
 import fs2.Stream
@@ -27,7 +27,7 @@ object Serializer extends StrictLogging {
                 }
                 else deser(tail, Chunk.concatBytes(Seq(buffer, hd)), msgSizeBuf, msgSizeChunkBuf)
               case None =>
-                Pull.eval(logger.info("test123")) >> (msgSizeChunkBuf.size match {
+                 msgSizeChunkBuf.size match {
                   case acceptSize if acceptSize >= 4 =>
                     deser(
                       Stream.chunk(hd) ++ tail,
@@ -36,12 +36,12 @@ object Serializer extends StrictLogging {
                       Chunk.empty
                     )
                   case _ =>
-                    deser(Stream.chunk(hd.drop(4)) ++ tail,
+                    Pull.eval(logger.info("case any")) >> deser(Stream.chunk(hd.drop(4)) ++ tail,
                       Chunk.empty,
                       None,
                       Chunk.concatBytes(Seq(msgSizeChunkBuf, hd.take(4)))
                     )
-                })
+                }
             }
           case None => Pull.done
         }
@@ -50,8 +50,12 @@ object Serializer extends StrictLogging {
   }
 
   def toBytes[F[_]]: Pipe[F, NetworkMessage, Byte] = {
-    is => is.mapChunks(_.flatMap{ msg =>
-        val msgBytes = GeneralizedNetworkMessage.toProto(msg).toByteArray
+    is => is.mapChunks(_.flatMap{
+      case handshake: Handshake =>
+        val msgBytes = GeneralizedNetworkMessage.toProto(handshake).toByteArray
+        Chunk.bytes(msgBytes)
+      case anyMsg =>
+        val msgBytes = GeneralizedNetworkMessage.toProto(anyMsg).toByteArray
         Chunk.bytes(Ints.toByteArray(msgBytes.length) ++ msgBytes)
       }
     )

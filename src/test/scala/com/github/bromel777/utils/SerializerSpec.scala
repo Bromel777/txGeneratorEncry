@@ -1,8 +1,11 @@
 package com.github.bromel777.utils
 
+import akka.util.ByteString
 import cats.effect.IO
+import com.comcast.ip4s.{Port, SocketAddress}
+import com.github.bromel777.network.Network.protocolToBytes
 import org.encryfoundation.common.modifiers.history.Header
-import org.encryfoundation.common.network.BasicMessagesRepo.{InvNetworkMessage, NetworkMessage}
+import org.encryfoundation.common.network.BasicMessagesRepo.{GeneralizedNetworkMessage, Handshake, InvNetworkMessage, NetworkMessage}
 import org.encryfoundation.common.utils.TaggedTypes.{ModifierId, ModifierTypeId}
 import org.scalatest.propspec.AnyPropSpec
 import org.scalatest.Matchers
@@ -10,6 +13,7 @@ import scorex.utils.Random
 import fs2.Stream
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import org.encryfoundation.common.utils.Algos
+import com.comcast.ip4s._
 
 class SerializerSpec extends AnyPropSpec with Matchers {
 
@@ -19,7 +23,8 @@ class SerializerSpec extends AnyPropSpec with Matchers {
     val bytes = toBytesStream.through(Serializer.toBytes)
     val bytesDeser = for {
       logger <- Stream.eval(Slf4jLogger.create[IO])
-    } yield bytes.through(Serializer.fromBytes(logger))
+      msgBytes  <- bytes.through(Serializer.fromBytes(logger))
+    } yield msgBytes
     val res = bytesDeser.compile.toList.unsafeRunSync()
     testMsg.zip(res.map(_.asInstanceOf[InvNetworkMessage]))
       .forall { case (msg1, msg2) =>
