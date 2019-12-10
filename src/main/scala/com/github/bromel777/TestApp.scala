@@ -31,47 +31,4 @@ object TestApp extends IOApp {
 
 class First[F[_]: Concurrent](ref: Ref[F, Int]) {
 
-  val a: F[Unit] = for {
-    variable1 <- ref.get
-    _ <- Applicative[F].pure(println(s"I am the first stream. Ref before update: ${variable1}"))
-    _ <- ref.update(_ + 1)
-    variable <- ref.get
-    str <- Applicative[F].pure(println(s"I am the first stream. Variable is: ${variable}"))
-  } yield str
-
-  val b: F[Unit] = for {
-    variable1 <- ref.get
-    _ <- Applicative[F].pure(println(s"I am the second stream. Ref before update: ${variable1}"))
-    _ <- ref.update(_ * 2)
-    variable <- ref.get
-    str <- Applicative[F].pure(println(s"I am the second stream. Variable is: ${variable}"))
-  } yield str
-
-  def rand = (0 to 10).map(_ => Random.randomBytes()).toList
-
-  val bytes = rand.flatten.toArray
-
-  val bytes2 = rand.flatten.toArray
-
-  val chunks: Chunk[Byte] = Chunk.bytes(bytes)
-
-  val chunks2: Chunk[Byte] = Chunk.bytes(bytes2.take(32))
-
-  val byteStream = Stream.chunk[F, Byte](chunks) ++ Stream.chunk[F, Byte](chunks2)
-
-  def deserPipe: Pipe[F, Byte, Array[Byte]] = {
-    def pullDef(s: Stream[F, Byte], n: Long): Pull[F, Byte, Unit] =
-      s.pull.uncons.flatMap {
-        case Some((hd,tl)) =>
-          hd.size match {
-            case m if m > n => Pull.output(hd.take(1)) >> pullDef(tl, n - m)
-            case m => Pull.output(hd.take(1)) >> Pull.done
-          }
-        case None => Pull.done
-      }
-
-    in => pullDef(in,2).stream.chunks.map(b => println("Size:" + b.size)) >> Stream.emit(Random.randomBytes())
-  }
-
-  val program = byteStream.covary.through(deserPipe).map(str => println(str.length))
 }

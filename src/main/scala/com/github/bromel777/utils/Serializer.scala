@@ -7,11 +7,11 @@ import org.encryfoundation.common.network.BasicMessagesRepo.{GeneralizedNetworkM
 import cats.implicits._
 import com.typesafe.scalalogging.StrictLogging
 import fs2.Stream
-import org.slf4j.Logger
+import io.chrisdavenport.log4cats.Logger
 
 object Serializer extends StrictLogging {
 
-  def fromBytes[F[_]: Sync]: Pipe[F, Byte, NetworkMessage] = {
+  def fromBytes[F[_]: Sync](logger: Logger[F]): Pipe[F, Byte, NetworkMessage] = {
     def deser(bytesStream: Stream[F, Byte],
               buffer: Chunk[Byte],
               msgSizeBuf: Option[Int],
@@ -27,7 +27,7 @@ object Serializer extends StrictLogging {
                 }
                 else deser(tail, Chunk.concatBytes(Seq(buffer, hd)), msgSizeBuf, msgSizeChunkBuf)
               case None =>
-                msgSizeChunkBuf.size match {
+                Pull.eval(logger.info("test123")) >> (msgSizeChunkBuf.size match {
                   case acceptSize if acceptSize >= 4 =>
                     deser(
                       Stream.chunk(hd) ++ tail,
@@ -41,7 +41,7 @@ object Serializer extends StrictLogging {
                       None,
                       Chunk.concatBytes(Seq(msgSizeChunkBuf, hd.take(4)))
                     )
-                }
+                })
             }
           case None => Pull.done
         }

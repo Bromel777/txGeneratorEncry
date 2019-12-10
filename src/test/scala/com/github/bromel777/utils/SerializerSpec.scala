@@ -8,6 +8,7 @@ import org.scalatest.propspec.AnyPropSpec
 import org.scalatest.Matchers
 import scorex.utils.Random
 import fs2.Stream
+import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import org.encryfoundation.common.utils.Algos
 
 class SerializerSpec extends AnyPropSpec with Matchers {
@@ -16,7 +17,9 @@ class SerializerSpec extends AnyPropSpec with Matchers {
     val testMsg: List[InvNetworkMessage] = (0 to 100).map(_ => InvNetworkMessage((Header.modifierTypeId, Seq(ModifierId @@ Random.randomBytes())))).toList
     val toBytesStream = Stream.fromIterator[IO](testMsg.iterator)
     val bytes = toBytesStream.through(Serializer.toBytes)
-    val bytesDeser = bytes.through(Serializer.fromBytes)
+    val bytesDeser = for {
+      logger <- Stream.eval(Slf4jLogger.create[IO])
+    } yield bytes.through(Serializer.fromBytes(logger))
     val res = bytesDeser.compile.toList.unsafeRunSync()
     testMsg.zip(res.map(_.asInstanceOf[InvNetworkMessage]))
       .forall { case (msg1, msg2) =>
