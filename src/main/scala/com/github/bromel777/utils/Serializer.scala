@@ -49,6 +49,16 @@ object Serializer extends StrictLogging {
     is => deser(is, Chunk.empty, None, Chunk.empty).stream
   }
 
+  def handshakeFromBytes[F[_]](logger: Logger[F]): Pipe[F, Byte, NetworkMessage] = { is =>
+    def concatPull(is: Stream[F, Byte], buffer: Chunk[Byte]): Pull[F, NetworkMessage, Unit] = {
+      is.pull.uncons.flatMap {
+        case Some((hd, tailStream)) => Pull.eval(logger.info("handshakeFromBytes1")) >> concatPull(tailStream, Chunk.concat(List(buffer, hd)))
+        case None => Pull.eval(logger.info(s"handshakeFromBytes2. ${buffer}")) >> Pull.output(Chunk(GeneralizedNetworkMessage.fromProto(buffer.toArray).get)) >> Pull.done
+      }
+    }
+    concatPull(is, Chunk.empty).stream
+  }
+
   def toBytes[F[_]]: Pipe[F, NetworkMessage, Byte] = {
     is => is.mapChunks(_.flatMap{
       case handshake: Handshake =>

@@ -7,7 +7,6 @@ import cats.implicits._
 import cats.effect.{Blocker, Concurrent, ContextShift, Resource, Sync}
 import io.chrisdavenport.log4cats.Logger
 import com.comcast.ip4s._
-import com.github.bromel777.network.Network.connectToPeers
 import fs2.io.tcp.{Socket, SocketGroup}
 import fs2.{Chunk, Stream}
 import org.encryfoundation.common.network.BasicMessagesRepo.{GeneralizedNetworkMessage, Handshake}
@@ -22,7 +21,7 @@ object Network {
 
   println(Algos.encode(GeneralizedNetworkMessage.toProto(dummyHandshake).toByteArray))
 
-  val peers: List[SocketAddress[Ipv4Address]] = List(SocketAddress(ipv4"0.0.0.0", Port(9040).get))
+  val peer = SocketAddress(ipv4"0.0.0.0", Port(9040).get)
 
   def protocolToBytes(protocol: String) = protocol.split("\\.").map(elem => elem.toByte)
 
@@ -44,33 +43,28 @@ object Network {
       handlers    <- processIncoming(handler, logger)
     } yield handlers
 
-    val stream2 = for {
-      socketGroup <- Stream.resource(socketGroupF)
-      _ <- connectToPeers(socketGroupF, logger)
-    } yield ()
+    val stream2 = connectTo(peer, socketGroupF, logger)
 
     stream1 concurrently stream2
   }
 
-  def connectToPeers[F[_]: Sync : Concurrent : ContextShift](socketGroupF: Resource[F, SocketGroup], logger: Logger[F]) = for {
-    peer        <- Stream.fromIterator(peers.toIterator)
-    _           <- Stream.eval(logger.info(s"1"))
+  def connectTo[F[_]: Sync : Concurrent : ContextShift](peer: SocketAddress[Ipv4Address],
+                                                        socketGroupF: Resource[F, SocketGroup],
+                                                        logger: Logger[F]) = for {
     socketGroup <- Stream.resource(socketGroupF)
-    _           <- Stream.eval(logger.info(s"2"))
     socket      <- Stream.resource(socketGroup.client(peer.toInetSocketAddress))
-    _           <- Stream.eval(logger.info(s"3"))
     handler     <- Stream.eval(ConnectionHandler(socket, logger))
     _           <- handle(handler, logger)
   } yield ()
 
   def processIncoming[F[_] : Concurrent](handler: ConnectionHandler[F], logger: Logger[F]) = for {
-    _   <- Stream.eval(logger.info(s"test msg"))
-    msg <- handler.read()
-    _   <- Stream.eval(logger.info(s"Get msg: ${msg}"))
+    handshake <- handler.readHandshake()
+    _         <- Stream.eval(logger.info(s"Get handshake: ${handshake}"))
+    msg       <- handler.read()
+    _         <- Stream.eval(logger.info(s"Get msg: ${msg}"))
   } yield ()
 
   def handle[F[_]: Concurrent](handler: ConnectionHandler[F], logger: Logger[F]) = for {
-    _ <- Stream.eval(handler.write(dummyHandshake))
     _ <- processIncoming(handler, logger)
   } yield ()
 }
