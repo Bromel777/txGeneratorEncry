@@ -14,9 +14,11 @@ resolvers ++= Seq(
 )
 
 val fs2 = Seq(
-  "co.fs2" %% "fs2-core" % "2.0.1",
-  "co.fs2" %% "fs2-io" % "2.0.1",
+  "co.fs2" %% "fs2-core" % "2.1.0",
+  "co.fs2" %% "fs2-io" % "2.1.0",
 )
+
+val excludeFs2Binding = ExclusionRule(organization = "co.fs2")
 
 libraryDependencies ++= Seq(
   "org.typelevel"  %% "cats-effect" % "2.0.0-RC2",
@@ -24,13 +26,15 @@ libraryDependencies ++= Seq(
   "com.comcast" %% "ip4s-cats" % "1.2.1",
   "com.typesafe.akka" %% "akka-actor" % "2.5.13",
   "ch.qos.logback" % "logback-core" % "1.2.3",
-  "org.http4s" %% "http4s-dsl" % http4sVersion,
-  "org.http4s" %% "http4s-blaze-server" % http4sVersion,
-  "org.http4s" %% "http4s-blaze-client" % http4sVersion,
-  "org.http4s" %% "http4s-circe" % http4sVersion,
+  "org.http4s" %% "http4s-dsl" % http4sVersion excludeAll(excludeFs2Binding),
+  "org.http4s" %% "http4s-blaze-server" % http4sVersion excludeAll(excludeFs2Binding),
+  "org.http4s" %% "http4s-blaze-client" % http4sVersion excludeAll(excludeFs2Binding),
+  "org.http4s" %% "http4s-circe" % http4sVersion excludeAll(excludeFs2Binding),
   "org.iq80.leveldb" % "leveldb" % "0.9",
   "org.encry" %% "encry-common" % "0.9.2",
   "com.google.guava" % "guava" % "27.1-jre",
+  "co.fs2" %% "fs2-core" % "2.1.0",
+  "co.fs2" %% "fs2-io" % "2.1.0",
   "io.circe" %% "circe-generic" % "0.11.2",
 ) ++ fs2
 
