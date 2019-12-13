@@ -1,14 +1,22 @@
 package org.encryfoundation.transactionGenerator.utils
 
-import org.encryfoundation.common.modifiers.mempool.transaction.Transaction
-import org.encryfoundation.common.network.BasicMessagesRepo.{ModifiersNetworkMessage, NetworkMessage}
+import org.encryfoundation.common.modifiers.mempool.transaction.{Transaction, TransactionProtoSerializer}
+import org.encryfoundation.common.network.BasicMessagesRepo.{InvNetworkMessage, ModifiersNetworkMessage, NetworkMessage}
 import org.encryfoundation.transactionGenerator.services.TransactionService.Message
 import org.encryfoundation.transactionGenerator.services.TransactionService.Messages.TransactionForNetwork
 
 object Casting {
 
-  def castFromMessage2EncryNetMsg(msg: Message): NetworkMessage = msg match {
+  def castFromMessage2EncryNetMsgModifier(msg: Message): ModifiersNetworkMessage = msg match {
     case msgWithTx: TransactionForNetwork =>
-      ModifiersNetworkMessage(Transaction.modifierTypeId, Map(msgWithTx.tx.id -> msgWithTx.tx.bytes))
+      ModifiersNetworkMessage(
+        Transaction.modifierTypeId,
+        Map(msgWithTx.tx.id -> TransactionProtoSerializer.toProto(msgWithTx.tx).toByteArray)
+      )
+  }
+
+  def castFromMessage2EncryNetMsgInv(msg: Message): InvNetworkMessage = msg match {
+    case msgWithTx: TransactionForNetwork =>
+      InvNetworkMessage(Transaction.modifierTypeId, List(msgWithTx.tx.id))
   }
 }

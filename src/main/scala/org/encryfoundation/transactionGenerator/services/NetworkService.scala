@@ -5,16 +5,13 @@ import java.net.InetSocketAddress
 import cats.effect.concurrent.Ref
 import cats.effect.{Concurrent, ContextShift, Resource, Sync}
 import cats.implicits._
+import com.comcast.ip4s._
 import fs2.Stream
 import fs2.concurrent.{Queue, Topic}
 import fs2.io.tcp.SocketGroup
-import com.comcast.ip4s._
 import io.chrisdavenport.log4cats.Logger
-import org.encryfoundation.common.network.BasicMessagesRepo.NetworkMessage
-import org.encryfoundation.transactionGenerator.network.{ConnectionHandler, SocketHandler}
-import org.encryfoundation.transactionGenerator.network.Network.{dummyHandshake, processIncoming}
-import org.encryfoundation.transactionGenerator.services.TransactionService.Message
-import org.encryfoundation.transactionGenerator.utils.Casting
+import org.encryfoundation.common.network.BasicMessagesRepo.{Handshake, NetworkMessage}
+import org.encryfoundation.transactionGenerator.network.SocketHandler
 
 trait NetworkService[F[_]] {
 
@@ -27,21 +24,33 @@ trait NetworkService[F[_]] {
 
 object NetworkService {
 
+  val dummyHandshake = Handshake(protocolToBytes("0.9.3"),
+    "test node",
+    Some(SocketAddress(ipv4"192.168.30.104", Port(1234).get).toInetSocketAddress),
+    1575975624532L)
+
+  def protocolToBytes(protocol: String) = protocol.split("\\.").map(elem => elem.toByte)
+
   private class Live[F[_] : Sync : Concurrent : ContextShift](socketGroupResource: Resource[F, SocketGroup],
                                                               logger: Logger[F],
-                                                              connectedPeers: Ref[F, Map[SocketAddress[Ipv4Address], ConnectionHandler[F]]],
+                                                              connectedPeers: Ref[F, Map[SocketAddress[Ipv4Address], SocketHandler[F]]],
                                                               connectBuffer: Queue[F, SocketAddress[Ipv4Address]],
-                                                              disconnectBuffer: Queue[F, ConnectionHandler[F]],
-                                                              txServiceTopic: Topic[F, Message]) extends NetworkService[F] {
+                                                              disconnectBuffer: Queue[F, SocketHandler[F]],
+                                                              networkOutTopic: Topic[F, NetworkMessage],
+                                                              networkInTopic: Topic[F, NetworkMessage]) extends NetworkService[F] {
 
     override def connectTo(peer: SocketAddress[Ipv4Address]): F[Unit] = connectBuffer.enqueue1(peer)
 
-    override def closeConnection(ip: SocketAddress[Ipv4Address]): F[Unit] = disconnectBuffer.dequeue1.flatMap(_.close())
+    override def closeConnection(ip: SocketAddress[Ipv4Address]): F[Unit] =
+      disconnectBuffer.dequeue1.flatMap(_.close)
 
     override val subscribe: Stream[F, Unit] = for {
-      msg   <- txServiceTopic.subscribe(100)
+      msg   <- networkOutTopic.subscribe(100)
+      _     <- Stream.eval(logger.info(s"get msg from topic: ${msg}"))
       peers <- Stream.eval(connectedPeers.get)
-      _     <- Stream.emits(peers.values.toList.map(_.write(Casting.castFromMessage2EncryNetMsg(msg))))
+      _     <- Stream.eval(logger.info(s"peers: ${peers}"))
+      peer  <- Stream.emits(peers.values.toList)
+      _     <- Stream.eval(peer.write(msg))
     } yield ()
 
     //todo: implement
@@ -52,11 +61,8 @@ object NetworkService {
       val startServerProgram = for {
         socketGroup <- Stream.resource(socketGroupResource)
         _           <- Stream.eval(logger.info(s"Start server at port ${port}"))
-        socketRes   <- socketGroup.server(new InetSocketAddress(port.value))
-        socket      <- Stream.resource(socketRes)
-        handler     <- Stream.eval(ConnectionHandler(socket, logger))
-        handlers    <- processIncoming(handler, logger)
-      } yield handlers
+        _           <- socketGroup.server(new InetSocketAddress(port.value))
+      } yield ()
 
       val toConnectStream = for {
         peerToConnect <- connectBuffer.dequeue
@@ -64,19 +70,23 @@ object NetworkService {
         socket        <- Stream.resource(socketGroup.client(peerToConnect.toInetSocketAddress))
         handler       <- Stream.eval(SocketHandler(socket, logger))
         _             <- Stream.eval(handler.write(dummyHandshake))
+        _             <- Stream.eval(connectedPeers.update(_.updated(peerToConnect, handler)))
         msg           <- handler.read()
         _             <- Stream.eval(logger.info(s"get msg: $msg"))
+        _             <- Stream.eval(networkInTopic.publish1(msg))
       } yield ()
 
-      (startServerProgram concurrently  (Stream.eval(connectTo(SocketAddress(ipv4"0.0.0.0", Port(9040).get))) ++ toConnectStream))
+      (startServerProgram concurrently (Stream.eval(connectTo(SocketAddress(ipv4"172.16.11.14", Port(9040).get))) ++ toConnectStream)
+        concurrently subscribe)
     }
   }
 
   def apply[F[_]: Sync : Concurrent : ContextShift](socketGroupResource: Resource[F, SocketGroup],
                                                     logger: Logger[F],
-                                                    txTopic: Topic[F, Message]): F[NetworkService[F]] = for {
+                                                    networkOutTopic: Topic[F, NetworkMessage],
+                                                    networkInTopic: Topic[F, NetworkMessage]): F[NetworkService[F]] = for {
     connectBuffer <- Queue.bounded[F, SocketAddress[Ipv4Address]](100)
-    disconnectBuffer <- Queue.bounded[F, ConnectionHandler[F]](100)
-    peers <- Ref.of[F, Map[SocketAddress[Ipv4Address], ConnectionHandler[F]]](Map.empty)
-  } yield (new Live(socketGroupResource, logger, peers, connectBuffer, disconnectBuffer, txTopic))
+    disconnectBuffer <- Queue.bounded[F, SocketHandler[F]](100)
+    peers <- Ref.of[F, Map[SocketAddress[Ipv4Address], SocketHandler[F]]](Map.empty)
+  } yield (new Live(socketGroupResource, logger, peers, connectBuffer, disconnectBuffer, networkOutTopic, networkInTopic))
 }

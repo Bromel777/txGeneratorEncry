@@ -6,8 +6,7 @@ import cats.effect.concurrent.Ref
 import cats.effect.{Blocker, Concurrent, ExitCode, IO, IOApp, Sync}
 import cats.implicits._
 import com.comcast.ip4s.Port
-import org.encryfoundation.transactionGenerator.network.Network
-import org.encryfoundation.transactionGenerator.services.{ExplorerService, NetworkService, TransactionService}
+import org.encryfoundation.transactionGenerator.services.{ExplorerService, NetworkService, RequestAndResponseService, TransactionService}
 import org.encryfoundation.transactionGenerator.utils.Mnemonic
 import fs2.Stream
 import fs2.concurrent.Topic
@@ -18,8 +17,9 @@ import io.circe.Decoder
 import jawnfs2._
 import org.encryfoundation.common.modifiers.mempool.transaction.PubKeyLockedContract
 import org.encryfoundation.common.modifiers.state.box.EncryBaseBox
+import org.encryfoundation.common.network.BasicMessagesRepo.{NetworkMessage, SyncInfoNetworkMessage}
+import org.encryfoundation.common.network.SyncInfo
 import org.encryfoundation.common.utils.Algos
-import org.encryfoundation.transactionGenerator.network.Network
 import org.encryfoundation.transactionGenerator.services.TransactionService.Messages.Init
 import org.encryfoundation.transactionGenerator.utils.Mnemonic
 import org.http4s._
@@ -41,19 +41,18 @@ object TestApp extends IOApp {
 
   val program = for {
       logger <- Stream.eval(Slf4jLogger.create[IO])
-      dummyTopic <- Stream.eval(Topic[IO, TransactionService.Message](Init("Initial Event")))
-      networkService <- Stream.eval(NetworkService(sockets, logger, dummyTopic))
-      _ <- networkService.start(Port(1234).get)
+      txsTopic <- Stream.eval(Topic[IO, TransactionService.Message](Init("Initial Event")))
+      netInTopic <- Stream.eval(Topic[IO, NetworkMessage](SyncInfoNetworkMessage(SyncInfo(List.empty))))
+      netOutTopic <- Stream.eval(Topic[IO, NetworkMessage](SyncInfoNetworkMessage(SyncInfo(List.empty))))
+      networkService <- Stream.eval(NetworkService(sockets, logger, netOutTopic, netInTopic))
+      contextForExplorer <- Stream.emit(ExecutionContext.fromExecutorService(Executors.newFixedThreadPool(5)))
+      client  <- BlazeClientBuilder[IO](contextForExplorer).stream
+      explorerService <- Stream.eval(ExplorerService(client, logger))
+      startPoint <- Stream.eval(Ref.of[IO, Int](0))
+      txService <- Stream.eval(TransactionService(explorerService, startPoint, contractHash, privKey, 100, txsTopic))
+      reqAndResService <- Stream.eval(RequestAndResponseService(txsTopic, netInTopic, netOutTopic, logger))
+      _ <- networkService.start(Port(1234).get) concurrently reqAndResService.start concurrently txService.startTransactionPublishing
     } yield ()
-
-//  val reqProg =
-//    for {
-//      context <- Stream.emit(ExecutionContext.fromExecutorService(Executors.newFixedThreadPool(5)))
-//      logger  <- Stream.eval(Slf4jLogger.create[IO])
-//      client  <- BlazeClientBuilder[IO](context).stream
-//      service <- Stream.eval(ExplorerService(client, logger))
-//      boxes   <- service.getBoxesInRange(contractHash, 0, 100).evalTap()
-//    } yield (boxes)
 
 
   override def run(args: List[String]): IO[ExitCode] =

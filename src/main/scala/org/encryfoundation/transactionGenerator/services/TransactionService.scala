@@ -17,8 +17,6 @@ import scala.concurrent.duration._
 
 trait TransactionService[F[_]] {
 
-  val topicToNetworkService: Topic[F, Message]
-
   def startTransactionPublishing: Stream[F, Unit]
 }
 
@@ -35,7 +33,7 @@ object TransactionService {
                                               contractHash: String,
                                               privateKey: PrivateKey25519,
                                               boxesQty: Int,
-                                              override val topicToNetworkService: Topic[F, Message]) extends TransactionService[F] {
+                                              topicToReqAndResService: Topic[F, Message]) extends TransactionService[F] {
 
     private def getNextBoxes: Stream[F, AssetBox] = for {
       startPointVal <- Stream.eval(startPoint.get)
@@ -48,8 +46,8 @@ object TransactionService {
     } yield boxes
 
     override def startTransactionPublishing: Stream[F, Unit] =
-      topicToNetworkService.publish(
-        Stream.awakeEvery[F](1.seconds) zipRight getNextBoxes.through(TransactionPipes.fromBx2Tx(
+      topicToReqAndResService.publish(
+        Stream.awakeEvery[F](10.seconds) zipRight getNextBoxes.through(TransactionPipes.fromBx2Tx(
           privateKey,
           1
         )).map(tx => TransactionForNetwork(tx))

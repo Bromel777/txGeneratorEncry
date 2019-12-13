@@ -3,24 +3,26 @@ package org.encryfoundation.transactionGenerator.network
 import cats.effect.{Concurrent, Sync}
 import cats.implicits._
 import fs2.Stream
-import fs2.concurrent.Queue
+import fs2.concurrent.{Queue, Topic}
 import fs2.io.tcp.Socket
 import io.chrisdavenport.log4cats.Logger
 import org.encryfoundation.common.network.BasicMessagesRepo.NetworkMessage
 import org.encryfoundation.transactionGenerator.utils.Serializer
+
 import scala.concurrent.duration._
 
 trait SocketHandler[F[_]] {
 
   def read(): Stream[F, NetworkMessage]
   def write(msg: NetworkMessage): F[Unit]
+  def close: F[Unit]
 }
 
 object SocketHandler {
 
-  class Live[F[_]: Sync : Concurrent] (socket: Socket[F],
-                                       msgQueue: Queue[F, NetworkMessage],
-                                       logger: Logger[F]) extends SocketHandler[F] {
+  class Live[F[_]: Sync : Concurrent](socket: Socket[F],
+                                      msgQueue: Queue[F, NetworkMessage],
+                                      logger: Logger[F]) extends SocketHandler[F] {
 
     private val readHandshake: Stream[F, NetworkMessage] = Stream.eval(socket.read(1024, Some(30 seconds))).flatMap {
       case Some(chunk) => Stream.chunk(chunk).through(Serializer.handshakeFromBytes(logger))
@@ -35,7 +37,7 @@ object SocketHandler {
       readSocket concurrently writeOutput
     }
 
-    override def read(): Stream[F, NetworkMessage] = for {
+    override val read: Stream[F, NetworkMessage] = for {
       handshake <- readHandshake
       _         <- Stream.eval(logger.info(s"Got handshake: $handshake"))
       msg       <- readAnotherMessages
@@ -43,6 +45,8 @@ object SocketHandler {
 
     override def write(msg: NetworkMessage): F[Unit] =
       logger.info(s"add msg ${msg} to queue") *> msgQueue.enqueue1(msg)
+
+    override def close: F[Unit] = socket.close
   }
 
   def apply[F[_] : Sync : Concurrent](socket: Socket[F], logger: Logger[F]): F[SocketHandler[F]] = for {
