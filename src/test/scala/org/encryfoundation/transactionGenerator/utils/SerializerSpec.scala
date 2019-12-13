@@ -1,4 +1,4 @@
-package com.github.bromel777.utils
+package org.encryfoundation.transactionGenerator.utils
 
 import akka.util.ByteString
 import cats.effect.IO

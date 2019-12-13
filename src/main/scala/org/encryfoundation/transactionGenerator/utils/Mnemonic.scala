@@ -1,4 +1,4 @@
-package com.github.bromel777.utils
+package org.encryfoundation.transactionGenerator.utils
 
 import org.encryfoundation.common.crypto.PrivateKey25519
 import org.encryfoundation.common.utils.Algos

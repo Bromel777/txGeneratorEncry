@@ -1,4 +1,4 @@
-package com.github.bromel777.utils
+package org.encryfoundation.transactionGenerator.utils
 
 import org.encryfoundation.common.crypto.{PrivateKey25519, PublicKey25519, Signature25519}
 import org.encryfoundation.common.modifiers.mempool.directive._

@@ -1,4 +1,4 @@
-package com.github.bromel777.utils
+package org.encryfoundation.transactionGenerator.utils
 
 import cats.effect.Sync
 import com.google.common.primitives.{Bytes, Ints}

@@ -1,4 +1,4 @@
-package com.github.bromel777.network
+package org.encryfoundation.transactionGenerator.network
 
 import java.net.InetSocketAddress
 
@@ -21,14 +21,9 @@ object Network {
 
   println(Algos.encode(GeneralizedNetworkMessage.toProto(dummyHandshake).toByteArray))
 
-  val peer = SocketAddress(ipv4"0.0.0.0", Port(9040).get)
+  val peer: SocketAddress[Ipv4Address] = SocketAddress(ipv4"0.0.0.0", Port(9040).get)
 
   def protocolToBytes(protocol: String) = protocol.split("\\.").map(elem => elem.toByte)
-
-  def connectTo[F[_]: Concurrent : ContextShift](addr: SocketAddress[Ipv4Address],
-                                                 socketGroup: SocketGroup,
-                                                 logger: Logger[F]): Resource[F, Socket[F]] =
-    socketGroup.client(addr.toInetSocketAddress)
 
 
   def startServer[F[_] : Concurrent : ContextShift](port: Port,

@@ -1,7 +1,7 @@
-package com.github.bromel777.http
+package org.encryfoundation.transactionGenerator.http
 
 import cats.effect.IO
-import com.github.bromel777.TestApp.contractHash
+import org.encryfoundation.transactionGenerator.TestApp.contractHash
 import org.encryfoundation.prismlang.compiler.CompiledContract.ContractHash
 import org.http4s.{Method, Request, Uri}
 
