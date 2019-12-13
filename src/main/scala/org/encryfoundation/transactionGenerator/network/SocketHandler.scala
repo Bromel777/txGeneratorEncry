@@ -9,6 +9,7 @@ import io.chrisdavenport.log4cats.Logger
 import org.encryfoundation.common.network.BasicMessagesRepo.NetworkMessage
 import org.encryfoundation.transactionGenerator.utils.Serializer
 import scala.concurrent.duration._
+
 trait SocketHandler[F[_]] {
 
   def read(): Stream[F, NetworkMessage]
@@ -21,13 +22,24 @@ object SocketHandler {
                                        msgQueue: Queue[F, NetworkMessage],
                                        logger: Logger[F]) extends SocketHandler[F] {
 
-    override def read(): Stream[F, NetworkMessage] = {
+    private val readHandshake: Stream[F, NetworkMessage] = Stream.eval(socket.read(1024, Some(30 seconds))).flatMap {
+      case Some(chunk) => Stream.chunk(chunk).through(Serializer.handshakeFromBytes(logger))
+      case None => readHandshake
+    }
+
+    private val readAnotherMessages = {
       val readSocket = socket.reads(1024).through(Serializer.fromBytes(logger))
       val writeOutput = msgQueue.dequeue
         .through(Serializer.toBytes)
         .through(socket.writes(None)) >> Stream.eval(logger.info("Write to socket"))
       readSocket concurrently writeOutput
     }
+
+    override def read(): Stream[F, NetworkMessage] = for {
+      handshake <- readHandshake
+      _         <- Stream.eval(logger.info(s"Got handshake: $handshake"))
+      msg       <- readAnotherMessages
+    } yield msg
 
     override def write(msg: NetworkMessage): F[Unit] =
       logger.info(s"add msg ${msg} to queue") *> msgQueue.enqueue1(msg)

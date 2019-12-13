@@ -5,13 +5,13 @@ import java.net.InetSocketAddress
 import cats.effect.concurrent.Ref
 import cats.effect.{Concurrent, ContextShift, Resource, Sync}
 import cats.implicits._
-import com.comcast.ip4s.{Ipv4Address, Port, SocketAddress}
 import fs2.Stream
 import fs2.concurrent.{Queue, Topic}
 import fs2.io.tcp.SocketGroup
+import com.comcast.ip4s._
 import io.chrisdavenport.log4cats.Logger
 import org.encryfoundation.common.network.BasicMessagesRepo.NetworkMessage
-import org.encryfoundation.transactionGenerator.network.ConnectionHandler
+import org.encryfoundation.transactionGenerator.network.{ConnectionHandler, SocketHandler}
 import org.encryfoundation.transactionGenerator.network.Network.{dummyHandshake, processIncoming}
 import org.encryfoundation.transactionGenerator.services.TransactionService.Message
 import org.encryfoundation.transactionGenerator.utils.Casting
@@ -62,13 +62,13 @@ object NetworkService {
         peerToConnect <- connectBuffer.dequeue
         socketGroup   <- Stream.resource(socketGroupResource)
         socket        <- Stream.resource(socketGroup.client(peerToConnect.toInetSocketAddress))
-        handler       <- Stream.eval(ConnectionHandler(socket, logger))
+        handler       <- Stream.eval(SocketHandler(socket, logger))
         _             <- Stream.eval(handler.write(dummyHandshake))
         msg           <- handler.read()
         _             <- Stream.eval(logger.info(s"get msg: $msg"))
       } yield ()
 
-      startServerProgram ++ toConnectStream
+      (startServerProgram concurrently  (Stream.eval(connectTo(SocketAddress(ipv4"0.0.0.0", Port(9040).get))) ++ toConnectStream))
     }
   }
 
