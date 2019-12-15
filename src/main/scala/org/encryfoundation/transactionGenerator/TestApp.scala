@@ -21,6 +21,7 @@ import org.encryfoundation.common.network.BasicMessagesRepo.{NetworkMessage, Syn
 import org.encryfoundation.common.network.SyncInfo
 import org.encryfoundation.common.utils.Algos
 import org.encryfoundation.transactionGenerator.services.TransactionService.Messages.Init
+import org.encryfoundation.transactionGenerator.settings.GeneratorSettings
 import org.encryfoundation.transactionGenerator.utils.Mnemonic
 import org.http4s._
 import org.http4s.client.blaze._
@@ -41,6 +42,8 @@ object TestApp extends IOApp {
 
   val program = for {
       logger <- Stream.eval(Slf4jLogger.create[IO])
+      config <- Stream.emit(GeneratorSettings.loadConfig("local.conf"))
+      _      <- Stream.eval(logger.info(s"get setting: ${config}"))
       txsTopic <- Stream.eval(Topic[IO, TransactionService.Message](Init("Initial Event")))
       netInTopic <- Stream.eval(Topic[IO, NetworkMessage](SyncInfoNetworkMessage(SyncInfo(List.empty))))
       netOutTopic <- Stream.eval(Topic[IO, NetworkMessage](SyncInfoNetworkMessage(SyncInfo(List.empty))))

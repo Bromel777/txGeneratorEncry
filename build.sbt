@@ -30,6 +30,8 @@ libraryDependencies ++= Seq(
   "org.http4s" %% "http4s-blaze-server" % http4sVersion excludeAll(excludeFs2Binding),
   "org.http4s" %% "http4s-blaze-client" % http4sVersion excludeAll(excludeFs2Binding),
   "org.http4s" %% "http4s-circe" % http4sVersion excludeAll(excludeFs2Binding),
+  "com.iheart" %% "ficus" % "1.4.2",
+  "com.typesafe" % "config" % "1.3.3",
   "org.iq80.leveldb" % "leveldb" % "0.9",
   "org.encry" %% "encry-common" % "0.9.2",
   "com.google.guava" % "guava" % "27.1-jre",
