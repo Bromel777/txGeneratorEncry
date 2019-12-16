@@ -57,7 +57,9 @@ object TransactionService {
           privateKey,
           1
         )).map(tx => TransactionForNetwork(tx)).evalTap(tx => logger.info(s"send tx: ${tx}. ${(1/settings.tps)}")).repeat.metered((1/settings.tps) seconds)
-      )
+      ).handleErrorWith { err =>
+        Stream.eval(logger.error(s"Network service err ${err}")) >> Stream.empty
+      }
   }
 
   def apply[F[_]: Timer: Concurrent](explorerService: ExplorerService[F],

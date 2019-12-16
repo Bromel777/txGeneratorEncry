@@ -80,7 +80,7 @@ object NetworkService {
       } yield ())
 
       (startServerProgram concurrently toConnectStream concurrently subscribe).handleErrorWith { err =>
-        Stream.eval(logger.info(s"Network service err ${err}")) >> Stream.empty
+        Stream.eval(logger.error(s"Network service err ${err}")) >> Stream.empty
       }
     }
   }

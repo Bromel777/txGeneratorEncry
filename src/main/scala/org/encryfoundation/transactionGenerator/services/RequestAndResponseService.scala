@@ -67,7 +67,7 @@ object RequestAndResponseService {
       )
 
       (sendingToNetworkTopic concurrently (networkTopicSubscriber concurrently transactionTopicSubscriber)).handleErrorWith { err =>
-        Stream.eval(logger.info(s"R&R service err ${err}")) >> Stream.empty
+        Stream.eval(logger.error(s"R&R service err ${err}")) >> Stream.empty
       }
       }
   }
