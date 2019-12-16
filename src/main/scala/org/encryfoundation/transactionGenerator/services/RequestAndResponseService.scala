@@ -66,8 +66,10 @@ object RequestAndResponseService {
           .evalTap(msg => logger.info(s"try to request for msg: ${msg}"))
       )
 
-      sendingToNetworkTopic concurrently (networkTopicSubscriber concurrently transactionTopicSubscriber)
-      }.handleErrorWith { e => Stream.eval(logger.info(s"error: ${e.getMessage}")) }
+      (sendingToNetworkTopic concurrently (networkTopicSubscriber concurrently transactionTopicSubscriber)).handleErrorWith { err =>
+        Stream.eval(logger.info(s"R&R service err ${err}")) >> Stream.empty
+      }
+      }
   }
 
   def apply[F[_]: Concurrent : Timer](transactionTopic: Topic[F, Message],

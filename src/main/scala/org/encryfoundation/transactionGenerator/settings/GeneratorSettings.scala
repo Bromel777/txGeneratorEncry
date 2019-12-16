@@ -5,7 +5,9 @@ import com.typesafe.config.{Config, ConfigFactory}
 import net.ceedubs.ficus.Ficus._
 import net.ceedubs.ficus.readers.ArbitraryTypeReader._
 import net.ceedubs.ficus.readers.ValueReader
+import org.encryfoundation.transactionGenerator.settings.GeneratorSettings.{LoadSettings, Network}
 
+case class GeneratorSettings(networkSettings: Network, loadSettings: LoadSettings)
 
 object GeneratorSettings {
 
@@ -18,11 +20,12 @@ object GeneratorSettings {
   }
 
   case class Network(peers: List[SocketAddress[Ipv4Address]])
+  case class LoadSettings(tps: Double)
 
-  def loadConfig(configName: String): Network =
+  def loadConfig(configName: String): GeneratorSettings =
     ConfigFactory
       .load(configName)
       .withFallback(ConfigFactory.load())
-      .as[Network](configPath)
+      .as[GeneratorSettings](configPath)
 
 }

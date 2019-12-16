@@ -77,20 +77,21 @@ object NetworkService {
         msg           <- handler.read()
         _             <- Stream.eval(logger.info(s"get msg: $msg"))
         _             <- Stream.eval(networkInTopic.publish1(msg))
-      } yield ()).handleErrorWith { err =>
-        Stream.eval(logger.info(s"Got error in toConnect stream: ${err}")) >> Stream.empty
-      }
+      } yield ())
 
-      (startServerProgram concurrently (Stream.eval(connectTo(SocketAddress(ipv4"172.16.11.14", Port(9040).get))) ++ toConnectStream)
-        concurrently subscribe)
+      (startServerProgram concurrently toConnectStream concurrently subscribe).handleErrorWith { err =>
+        Stream.eval(logger.info(s"Network service err ${err}")) >> Stream.empty
+      }
     }
   }
 
   def apply[F[_]: Sync : Concurrent : ContextShift](socketGroupResource: Resource[F, SocketGroup],
                                                     logger: Logger[F],
                                                     networkOutTopic: Topic[F, NetworkMessage],
-                                                    networkInTopic: Topic[F, NetworkMessage]): F[NetworkService[F]] = for {
+                                                    networkInTopic: Topic[F, NetworkMessage],
+                                                    initPeers: List[SocketAddress[Ipv4Address]]): F[NetworkService[F]] = for {
     connectBuffer <- Queue.bounded[F, SocketAddress[Ipv4Address]](100)
+    _             <- initPeers.traverse(connectBuffer.enqueue1)
     disconnectBuffer <- Queue.bounded[F, SocketHandler[F]](100)
     peers <- Ref.of[F, Map[SocketAddress[Ipv4Address], SocketHandler[F]]](Map.empty)
   } yield (new Live(socketGroupResource, logger, peers, connectBuffer, disconnectBuffer, networkOutTopic, networkInTopic))

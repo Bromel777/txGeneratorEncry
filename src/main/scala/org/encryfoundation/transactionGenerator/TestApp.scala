@@ -47,14 +47,14 @@ object TestApp extends IOApp {
       txsTopic <- Stream.eval(Topic[IO, TransactionService.Message](Init("Initial Event")))
       netInTopic <- Stream.eval(Topic[IO, NetworkMessage](SyncInfoNetworkMessage(SyncInfo(List.empty))))
       netOutTopic <- Stream.eval(Topic[IO, NetworkMessage](SyncInfoNetworkMessage(SyncInfo(List.empty))))
-      networkService <- Stream.eval(NetworkService(sockets, logger, netOutTopic, netInTopic))
+      networkService <- Stream.eval(NetworkService(sockets, logger, netOutTopic, netInTopic, config.networkSettings.peers))
       contextForExplorer <- Stream.emit(ExecutionContext.fromExecutorService(Executors.newFixedThreadPool(5)))
       client  <- BlazeClientBuilder[IO](contextForExplorer).stream
       explorerService <- Stream.eval(ExplorerService(client, logger))
       startPoint <- Stream.eval(Ref.of[IO, Int](0))
-      txService <- Stream.eval(TransactionService(explorerService, startPoint, contractHash, privKey, 100, txsTopic))
+      txService <- Stream.eval(TransactionService(explorerService, startPoint, contractHash, privKey, 100, txsTopic, config.loadSettings, logger))
       reqAndResService <- Stream.eval(RequestAndResponseService(txsTopic, netInTopic, netOutTopic, logger))
-      _ <- networkService.start(Port(1234).get) concurrently reqAndResService.start concurrently txService.startTransactionPublishing
+      _ <- networkService.start(Port(1235).get) concurrently reqAndResService.start concurrently txService.startTransactionPublishing
     } yield ()
 
 
