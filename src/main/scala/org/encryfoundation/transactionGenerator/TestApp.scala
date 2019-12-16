@@ -3,7 +3,7 @@ package org.encryfoundation.transactionGenerator
 import java.util.concurrent.Executors
 
 import cats.effect.concurrent.Ref
-import cats.effect.{Blocker, Concurrent, ExitCode, IO, IOApp, Sync}
+import cats.effect.{Blocker, Concurrent, ExitCode, IO, IOApp, Resource, Sync}
 import cats.implicits._
 import com.comcast.ip4s.Port
 import org.encryfoundation.transactionGenerator.services.{ExplorerService, NetworkService, RequestAndResponseService, TransactionService}
@@ -35,7 +35,7 @@ object TestApp extends IOApp {
   val contractHash: String = Algos.encode(PubKeyLockedContract(privKey.publicImage.pubKeyBytes).contract.hash)
 
 
-  val sockets = for {
+  val sockets: Resource[IO, SocketGroup] = for {
       blocker     <- Blocker[IO]
       socketGroup <- SocketGroup[IO](blocker)
     } yield socketGroup
