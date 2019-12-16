@@ -3,7 +3,7 @@ package org.encryfoundation.transactionGenerator
 import java.util.concurrent.Executors
 
 import cats.effect.concurrent.Ref
-import cats.effect.{Blocker, Concurrent, ExitCode, IO, IOApp, Sync}
+import cats.effect.{Blocker, Concurrent, ExitCode, IO, IOApp, Resource, Sync}
 import cats.implicits._
 import com.comcast.ip4s.Port
 import org.encryfoundation.transactionGenerator.services.{ExplorerService, NetworkService, RequestAndResponseService, TransactionService}
@@ -35,7 +35,7 @@ object TestApp extends IOApp {
   val contractHash: String = Algos.encode(PubKeyLockedContract(privKey.publicImage.pubKeyBytes).contract.hash)
 
 
-  val sockets = for {
+  val sockets: Resource[IO, SocketGroup] = for {
       blocker     <- Blocker[IO]
       socketGroup <- SocketGroup[IO](blocker)
     } yield socketGroup
@@ -47,14 +47,14 @@ object TestApp extends IOApp {
       txsTopic <- Stream.eval(Topic[IO, TransactionService.Message](Init("Initial Event")))
       netInTopic <- Stream.eval(Topic[IO, NetworkMessage](SyncInfoNetworkMessage(SyncInfo(List.empty))))
       netOutTopic <- Stream.eval(Topic[IO, NetworkMessage](SyncInfoNetworkMessage(SyncInfo(List.empty))))
-      networkService <- Stream.eval(NetworkService(sockets, logger, netOutTopic, netInTopic))
+      networkService <- Stream.eval(NetworkService(sockets, logger, netOutTopic, netInTopic, config.networkSettings.peers))
       contextForExplorer <- Stream.emit(ExecutionContext.fromExecutorService(Executors.newFixedThreadPool(5)))
       client  <- BlazeClientBuilder[IO](contextForExplorer).stream
       explorerService <- Stream.eval(ExplorerService(client, logger))
       startPoint <- Stream.eval(Ref.of[IO, Int](0))
-      txService <- Stream.eval(TransactionService(explorerService, startPoint, contractHash, privKey, 100, txsTopic))
+      txService <- Stream.eval(TransactionService(explorerService, startPoint, contractHash, privKey, 100, txsTopic, config.loadSettings, logger))
       reqAndResService <- Stream.eval(RequestAndResponseService(txsTopic, netInTopic, netOutTopic, logger))
-      _ <- networkService.start(Port(1234).get) concurrently reqAndResService.start concurrently txService.startTransactionPublishing
+      _ <- networkService.start(Port(1235).get) concurrently reqAndResService.start concurrently txService.startTransactionPublishing
     } yield ()
 
 

@@ -1,17 +1,19 @@
 package org.encryfoundation.transactionGenerator.utils
 
+import cats.MonadError
 import cats.effect.Sync
 import com.google.common.primitives.{Bytes, Ints}
-import fs2.{Chunk, Pipe, Pull, Stream}
+import fs2.{Chunk, Pipe, Pull, RaiseThrowable, Stream}
 import org.encryfoundation.common.network.BasicMessagesRepo.{GeneralizedNetworkMessage, Handshake, NetworkMessage}
 import cats.implicits._
 import com.typesafe.scalalogging.StrictLogging
-import fs2.Stream
 import io.chrisdavenport.log4cats.Logger
+
+import scala.util.{Failure, Success}
 
 object Serializer extends StrictLogging {
 
-  def fromBytes[F[_]: Sync](logger: Logger[F]): Pipe[F, Byte, NetworkMessage] = {
+  def fromBytes[F[_]: Sync : RaiseThrowable](logger: Logger[F]): Pipe[F, Byte, NetworkMessage] = {
     def deser(bytesStream: Stream[F, Byte],
               buffer: Chunk[Byte],
               msgSizeBuf: Option[Int],

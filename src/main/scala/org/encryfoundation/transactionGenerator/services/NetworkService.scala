@@ -2,6 +2,7 @@ package org.encryfoundation.transactionGenerator.services
 
 import java.net.InetSocketAddress
 
+import cats.MonadError
 import cats.effect.concurrent.Ref
 import cats.effect.{Concurrent, ContextShift, Resource, Sync}
 import cats.implicits._
@@ -31,13 +32,14 @@ object NetworkService {
 
   def protocolToBytes(protocol: String) = protocol.split("\\.").map(elem => elem.toByte)
 
-  private class Live[F[_] : Sync : Concurrent : ContextShift](socketGroupResource: Resource[F, SocketGroup],
-                                                              logger: Logger[F],
-                                                              connectedPeers: Ref[F, Map[SocketAddress[Ipv4Address], SocketHandler[F]]],
-                                                              connectBuffer: Queue[F, SocketAddress[Ipv4Address]],
-                                                              disconnectBuffer: Queue[F, SocketHandler[F]],
-                                                              networkOutTopic: Topic[F, NetworkMessage],
-                                                              networkInTopic: Topic[F, NetworkMessage]) extends NetworkService[F] {
+  private class Live[F[_] : Sync : Concurrent : ContextShift : MonadError[*[_], Throwable]]
+                    (socketGroupResource: Resource[F, SocketGroup],
+                     logger: Logger[F],
+                     connectedPeers: Ref[F, Map[SocketAddress[Ipv4Address], SocketHandler[F]]],
+                     connectBuffer: Queue[F, SocketAddress[Ipv4Address]],
+                     disconnectBuffer: Queue[F, SocketHandler[F]],
+                     networkOutTopic: Topic[F, NetworkMessage],
+                     networkInTopic: Topic[F, NetworkMessage]) extends NetworkService[F] {
 
     override def connectTo(peer: SocketAddress[Ipv4Address]): F[Unit] = connectBuffer.enqueue1(peer)
 
@@ -64,8 +66,9 @@ object NetworkService {
         _           <- socketGroup.server(new InetSocketAddress(port.value))
       } yield ()
 
-      val toConnectStream = for {
+      val toConnectStream = (for {
         peerToConnect <- connectBuffer.dequeue
+        _             <- Stream.eval(logger.info(s"Connect to ${peerToConnect}"))
         socketGroup   <- Stream.resource(socketGroupResource)
         socket        <- Stream.resource(socketGroup.client(peerToConnect.toInetSocketAddress))
         handler       <- Stream.eval(SocketHandler(socket, logger))
@@ -74,18 +77,21 @@ object NetworkService {
         msg           <- handler.read()
         _             <- Stream.eval(logger.info(s"get msg: $msg"))
         _             <- Stream.eval(networkInTopic.publish1(msg))
-      } yield ()
+      } yield ())
 
-      (startServerProgram concurrently (Stream.eval(connectTo(SocketAddress(ipv4"172.16.11.14", Port(9040).get))) ++ toConnectStream)
-        concurrently subscribe)
+      (startServerProgram concurrently toConnectStream concurrently subscribe).handleErrorWith { err =>
+        Stream.eval(logger.error(s"Network service err ${err}")) >> Stream.empty
+      }
     }
   }
 
   def apply[F[_]: Sync : Concurrent : ContextShift](socketGroupResource: Resource[F, SocketGroup],
                                                     logger: Logger[F],
                                                     networkOutTopic: Topic[F, NetworkMessage],
-                                                    networkInTopic: Topic[F, NetworkMessage]): F[NetworkService[F]] = for {
+                                                    networkInTopic: Topic[F, NetworkMessage],
+                                                    initPeers: List[SocketAddress[Ipv4Address]]): F[NetworkService[F]] = for {
     connectBuffer <- Queue.bounded[F, SocketAddress[Ipv4Address]](100)
+    _             <- initPeers.traverse(connectBuffer.enqueue1)
     disconnectBuffer <- Queue.bounded[F, SocketHandler[F]](100)
     peers <- Ref.of[F, Map[SocketAddress[Ipv4Address], SocketHandler[F]]](Map.empty)
   } yield (new Live(socketGroupResource, logger, peers, connectBuffer, disconnectBuffer, networkOutTopic, networkInTopic))
