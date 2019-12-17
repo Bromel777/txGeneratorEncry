@@ -19,7 +19,7 @@ object GeneratorSettings {
     SocketAddress(Ipv4Address(split(0)).get, Port(split(1).toInt).get)
   }
 
-  case class Network(peers: List[SocketAddress[Ipv4Address]])
+  case class Network(peers: List[SocketAddress[Ipv4Address]], bindPort: Int)
   case class LoadSettings(tps: Double)
 
   def loadConfig(configName: String): GeneratorSettings =
