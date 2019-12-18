@@ -29,7 +29,7 @@ object NetworkProgram {
 
   def protocolToBytes(protocol: String) = protocol.split("\\.").map(elem => elem.toByte)
 
-  private class Live[F[_] : Sync : Concurrent : ContextShift : Timer : Logger]
+  private class Live[F[_] : Concurrent : ContextShift : Timer : Logger]
                     (socketGroup: SocketGroup,
                      connectedPeers: Ref[F, Map[SocketAddress[Ipv4Address], SocketService[F]]],
                      connectBuffer: Queue[F, SocketAddress[Ipv4Address]],
@@ -38,12 +38,7 @@ object NetworkProgram {
                      networkOutTopic: Topic[F, NetworkMessage],
                      networkInTopic: Topic[F, NetworkMessage]) extends NetworkProgram[F] {
 
-    private def connectTo(peer: SocketAddress[Ipv4Address]): F[Unit] = connectBuffer.enqueue1(peer)
-
-    private def closeConnection(ip: SocketAddress[Ipv4Address]): F[Unit] =
-      disconnectBuffer.dequeue1.flatMap(_.close)
-
-    private def subscribe(networkOutTopic: Topic[F, NetworkMessage]): Stream[F, Unit] = for {
+    private val subscribe: Stream[F, Unit] = for {
       msg       <- networkOutTopic.subscribe(100)
       _         <- Stream.eval(Logger[F].info(s"get msg from topic: ${msg}"))
       peers     <- Stream.eval(connectedPeers.get)
@@ -55,27 +50,26 @@ object NetworkProgram {
     //todo: implement
     private val publish: Stream[F, NetworkMessage] = Stream.empty
 
+    private val startServer = for {
+      _           <- Stream.eval(Logger[F].info(s"Start server at port ${port}"))
+      _           <- socketGroup.server(new InetSocketAddress(port.value))
+    } yield ()
+
+    private val connect = (for {
+      peerToConnect <- connectBuffer.dequeue
+      _             <- Stream.eval(Logger[F].info(s"Connect to ${peerToConnect}"))
+      handlerRes    <- Stream.resource(SocketService(socketGroup, peerToConnect))
+      _             <- Stream.eval(handlerRes.write(dummyHandshake))
+      _             <- Stream.eval(connectedPeers.update(_.updated(peerToConnect, handlerRes)))
+      msg           <- handlerRes.read
+      _             <- Stream.eval(Logger[F].info(s"get msg: $msg"))
+      _             <- Stream.eval(networkInTopic.publish1(msg))
+    } yield ()).repeat.metered(5 seconds)
+
     override def start: Stream[F, Unit] = {
-
-      val startServerProgram = for {
-        _           <- Stream.eval(Logger[F].info(s"Start server at port ${port}"))
-        _           <- socketGroup.server(new InetSocketAddress(port.value))
-      } yield ()
-
-      val toConnectStream = (for {
-        peerToConnect <- connectBuffer.dequeue
-        _             <- Stream.eval(Logger[F].info(s"Connect to ${peerToConnect}"))
-        handlerRes    <- Stream.resource(SocketService(socketGroup, peerToConnect))
-        _             <- Stream.eval(handlerRes.write(dummyHandshake))
-        _             <- Stream.eval(connectedPeers.update(_.updated(peerToConnect, handlerRes)))
-        msg           <- handlerRes.read
-        _             <- Stream.eval(Logger[F].info(s"get msg: $msg"))
-        _             <- Stream.eval(networkInTopic.publish1(msg))
-      } yield ())
-
-      (startServerProgram concurrently toConnectStream.repeat.metered(5 seconds) concurrently subscribe(networkOutTopic)).handleErrorWith { err =>
-        Stream.eval(Logger[F].error(s"Network service err ${err}")) >> Stream.empty
-      }
+      startServer concurrently connect concurrently subscribe
+      }.handleErrorWith { err =>
+      Stream.eval( Logger[F].error( s"Network service err ${err}" ) ) >> Stream.empty
     }
   }
 

@@ -32,7 +32,7 @@ object ExplorerService {
     client <- BlazeClientBuilder[F](ec).resource
   } yield new Live(client)
 
-  final private class Live[F[_]: Sync : ConcurrentEffect: Logger](client: Client[F]) extends ExplorerService[F] {
+  final private class Live[F[_]: ConcurrentEffect: Logger](client: Client[F]) extends ExplorerService[F] {
 
     override def getBoxesInRange(contractHash: String,
                                  from: Int,
