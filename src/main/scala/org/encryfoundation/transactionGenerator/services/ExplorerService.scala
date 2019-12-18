@@ -20,10 +20,17 @@ trait ExplorerService[F[_]] {
 
 object ExplorerService {
 
-  def apply[F[_]: Sync : ConcurrentEffect: Logger]: Resource[F, ExplorerService[F]] = {
-    val ec = ExecutionContext.fromExecutorService(Executors.newFixedThreadPool(5))
-    BlazeClientBuilder[F](ec).resource.map { client => new Live(client) }
-  }
+  private def fixedPool[F[_]](implicit F: Sync[F]): Resource[F, ExecutionContext] =
+    Resource(F.delay {
+      val executor = Executors.newFixedThreadPool(5)
+      val ec = ExecutionContext.fromExecutor(executor)
+      (ec, F.delay(executor.shutdown()))
+    })
+
+  def apply[F[_]: ConcurrentEffect: Logger]: Resource[F, ExplorerService[F]] = for {
+    ec     <- fixedPool
+    client <- BlazeClientBuilder[F](ec).resource
+  } yield new Live(client)
 
   final private class Live[F[_]: Sync : ConcurrentEffect: Logger](client: Client[F]) extends ExplorerService[F] {
 

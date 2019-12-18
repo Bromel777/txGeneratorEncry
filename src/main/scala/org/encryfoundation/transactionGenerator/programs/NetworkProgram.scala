@@ -68,7 +68,7 @@ object NetworkProgram {
         handlerRes    <- Stream.resource(SocketService(socketGroup, peerToConnect))
         _             <- Stream.eval(handlerRes.write(dummyHandshake))
         _             <- Stream.eval(connectedPeers.update(_.updated(peerToConnect, handlerRes)))
-        msg           <- handlerRes.read()
+        msg           <- handlerRes.read
         _             <- Stream.eval(Logger[F].info(s"get msg: $msg"))
         _             <- Stream.eval(networkInTopic.publish1(msg))
       } yield ())
@@ -79,10 +79,10 @@ object NetworkProgram {
     }
   }
 
-  def apply[F[_]: Sync : Concurrent : ContextShift : Timer: Logger](initPeers: List[SocketAddress[Ipv4Address]],
-                                                                    port: Port,
-                                                                    networkOutTopic: Topic[F, NetworkMessage],
-                                                                    networkInTopic: Topic[F, NetworkMessage]): Resource[F, NetworkProgram[F]] =
+  def apply[F[_]: Concurrent : ContextShift : Timer: Logger](initPeers: List[SocketAddress[Ipv4Address]],
+                                                             port: Port,
+                                                             networkOutTopic: Topic[F, NetworkMessage],
+                                                             networkInTopic: Topic[F, NetworkMessage]): Resource[F, NetworkProgram[F]] =
     Blocker[F].flatMap { blocker =>
       SocketGroup[F](blocker).evalMap { socketGroup =>
         for {

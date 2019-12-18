@@ -13,7 +13,7 @@ import org.encryfoundation.transactionGenerator.utils.Serializer
 import scala.concurrent.duration._
 
 trait SocketService[F[_]] {
-  def read(): Stream[F, NetworkMessage]
+  def read: Stream[F, NetworkMessage]
   def write(msg: NetworkMessage): F[Unit]
   def close: F[Unit]
 }
