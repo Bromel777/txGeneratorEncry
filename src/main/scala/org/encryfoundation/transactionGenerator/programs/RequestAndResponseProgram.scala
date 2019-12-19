@@ -1,38 +1,36 @@
-package org.encryfoundation.transactionGenerator.services
+package org.encryfoundation.transactionGenerator.programs
 
-import cats.Applicative
-import cats.effect.{Concurrent, Timer}
 import cats.effect.concurrent.Ref
+import cats.effect.{Concurrent, Timer}
 import cats.implicits._
 import fs2.Stream
 import fs2.concurrent.{Queue, Topic}
-import org.encryfoundation.common.network.BasicMessagesRepo.{NetworkMessage, RequestModifiersNetworkMessage}
-import org.encryfoundation.common.utils.TaggedTypes.ModifierId
-import org.encryfoundation.transactionGenerator.services.TransactionService.{Message, Messages}
-import org.encryfoundation.transactionGenerator.utils.Casting
 import io.chrisdavenport.log4cats.Logger
+import org.encryfoundation.common.network.BasicMessagesRepo.{NetworkMessage, RequestModifiersNetworkMessage}
 import org.encryfoundation.common.utils.Algos
+import org.encryfoundation.common.utils.TaggedTypes.ModifierId
+import org.encryfoundation.transactionGenerator.programs.TransactionProgram.{Message, Messages}
+import org.encryfoundation.transactionGenerator.utils.Casting
 
 import scala.concurrent.duration._
 
-trait RequestAndResponseService[F[_]] {
+trait RequestAndResponseProgram[F[_]] {
 
   def start: Stream[F, Unit]
 }
 
-object RequestAndResponseService {
+object RequestAndResponseProgram {
 
-  private class Live[F[_]: Concurrent : Timer](transactionTopic: Topic[F, Message],
-                                               networkInTopic: Topic[F, NetworkMessage],
-                                               networkOutTopic: Topic[F, NetworkMessage],
-                                               networkOutBuffer: Queue[F, NetworkMessage],
-                                               cacheRef: Ref[F, Map[ModifierId, Message]],
-                                               logger: Logger[F]) extends RequestAndResponseService[F] {
+  private class Live[F[_]: Concurrent : Timer: Logger](networkOutBuffer: Queue[F, NetworkMessage],
+                                                       cacheRef: Ref[F, Map[ModifierId, Message]],
+                                                       transactionTopic: Topic[F, Message],
+                                                       networkInTopic: Topic[F, NetworkMessage],
+                                                       networkOutTopic: Topic[F, NetworkMessage]) extends RequestAndResponseProgram[F] {
 
-    override val start: Stream[F, Unit] = {
+    override def start: Stream[F, Unit] = {
       val networkTopicSubscriber = for {
         msgFromNetwork <- networkInTopic.subscribe(100)
-        _    <- Stream.eval(logger.info(s"Get msg in networkInTopic: ${msgFromNetwork}"))
+        _    <- Stream.eval(Logger[F].info(s"Get msg in networkInTopic: ${msgFromNetwork}"))
         cache <- Stream.eval(cacheRef.get)
         mod     <- msgFromNetwork match {
           case RequestModifiersNetworkMessage(data) =>
@@ -44,15 +42,15 @@ object RequestAndResponseService {
             Stream.emits(List.empty)
         }
         _ <- Stream.eval(networkOutBuffer.enqueue1(Casting.castFromMessage2EncryNetMsgModifier(mod._2)))
-        _ <- Stream.eval(logger.info(s"add to queue mod ${Algos.encode(mod._1)}"))
+        _ <- Stream.eval(Logger[F].info(s"add to queue mod ${Algos.encode(mod._1)}"))
         _ <- Stream.eval(cacheRef.update(_ - mod._1))
       } yield ()
 
       val transactionTopicSubscriber = for {
         txMsg <- transactionTopic.subscribe(100)
-        _     <- Stream.eval(logger.info(s"Get msg from txExplorer: ${txMsg}"))
+        _     <- Stream.eval(Logger[F].info(s"Get msg from txExplorer: ${txMsg}"))
         _     <- txMsg match {
-          case Messages.Init(_) => Stream.eval(logger.info("In empty transactionTopicSubscriber"))
+          case Messages.Init(_) => Stream.eval(Logger[F].info("In empty transactionTopicSubscriber"))
           case Messages.TransactionForNetwork(tx) =>
             Stream.eval(cacheRef.update(_ + (tx.id -> txMsg))) >>
               Stream.eval(
@@ -63,21 +61,20 @@ object RequestAndResponseService {
 
       val sendingToNetworkTopic = networkOutTopic.publish(
         Stream.awakeEvery[F](0.5 seconds) zipRight networkOutBuffer.dequeue
-          .evalTap(msg => logger.info(s"try to request for msg: ${msg}"))
+          .evalTap(msg => Logger[F].info(s"try to request for msg: ${msg}"))
       )
 
       (sendingToNetworkTopic concurrently (networkTopicSubscriber concurrently transactionTopicSubscriber)).handleErrorWith { err =>
-        Stream.eval(logger.error(s"R&R service err ${err}")) >> Stream.empty
+        Stream.eval(Logger[F].error(s"R&R service err ${err}")) >> Stream.empty
       }
       }
   }
 
-  def apply[F[_]: Concurrent : Timer](transactionTopic: Topic[F, Message],
-                                      networkInTopic: Topic[F, NetworkMessage],
-                                      networkOutTopic: Topic[F, NetworkMessage],
-                                      logger: Logger[F]): F[RequestAndResponseService[F]] = for {
+  def apply[F[_]: Concurrent : Timer : Logger](transactionTopic: Topic[F, Message],
+                                               networkInTopic: Topic[F, NetworkMessage],
+                                               networkOutTopic: Topic[F, NetworkMessage]): F[RequestAndResponseProgram[F]] = for {
     networkOutBuffer <- Queue.bounded[F, NetworkMessage](100)
     cache <- Ref.of[F, Map[ModifierId, Message]](Map.empty)
-  } yield new Live(transactionTopic, networkInTopic, networkOutTopic, networkOutBuffer, cache, logger)
+  } yield new Live(networkOutBuffer, cache, transactionTopic, networkInTopic, networkOutTopic)
 }
 

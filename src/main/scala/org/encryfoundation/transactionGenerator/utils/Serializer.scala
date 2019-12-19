@@ -13,7 +13,7 @@ import scala.util.{Failure, Success}
 
 object Serializer extends StrictLogging {
 
-  def fromBytes[F[_]: Sync : RaiseThrowable](logger: Logger[F]): Pipe[F, Byte, NetworkMessage] = {
+  def fromBytes[F[_]: Sync : RaiseThrowable : Logger]: Pipe[F, Byte, NetworkMessage] = {
     def deser(bytesStream: Stream[F, Byte],
               buffer: Chunk[Byte],
               msgSizeBuf: Option[Int],
@@ -23,8 +23,12 @@ object Serializer extends StrictLogging {
             msgSizeBuf match {
               case Some(msgSize) =>
                 if ((buffer.size + hd.size) >= msgSize) {
+                  Pull.eval(Logger[F].info(s"Chunk.concat(Seq(buffer, hd.take(msgSize - buffer.size))).toArray): " +
+                    s"${Chunk.concat(Seq(buffer, hd.take(msgSize - buffer.size))).toArray[Byte]}")) >>
                   Pull.output(
-                    Chunk(GeneralizedNetworkMessage.fromProto(Chunk.concat(Seq(buffer, hd.take(msgSize - buffer.size))).toArray).get)
+                    Chunk(GeneralizedNetworkMessage.fromProto(
+                      Chunk.concat(Seq(buffer, hd.take(msgSize - buffer.size))).toArray[Byte]).get
+                    )
                   ) >> deser(tail, hd.drop(msgSize - buffer.size), msgSizeBuf = None, Chunk.empty)
                 }
                 else deser(tail, Chunk.concatBytes(Seq(buffer, hd)), msgSizeBuf, msgSizeChunkBuf)
@@ -38,7 +42,7 @@ object Serializer extends StrictLogging {
                       Chunk.empty
                     )
                   case _ =>
-                    Pull.eval(logger.info("case any")) >> deser(Stream.chunk(hd.drop(4)) ++ tail,
+                    Pull.eval(Logger[F].info("case any")) >> deser(Stream.chunk(hd.drop(4)) ++ tail,
                       Chunk.empty,
                       None,
                       Chunk.concatBytes(Seq(msgSizeChunkBuf, hd.take(4)))
@@ -51,11 +55,11 @@ object Serializer extends StrictLogging {
     is => deser(is, Chunk.empty, None, Chunk.empty).stream
   }
 
-  def handshakeFromBytes[F[_]](logger: Logger[F]): Pipe[F, Byte, NetworkMessage] = { is =>
+  def handshakeFromBytes[F[_]: Logger]: Pipe[F, Byte, NetworkMessage] = { is =>
     def concatPull(is: Stream[F, Byte], buffer: Chunk[Byte]): Pull[F, NetworkMessage, Unit] = {
       is.pull.uncons.flatMap {
-        case Some((hd, tailStream)) => Pull.eval(logger.info("handshakeFromBytes1")) >> concatPull(tailStream, Chunk.concat(List(buffer, hd)))
-        case None => Pull.eval(logger.info(s"handshakeFromBytes2. ${buffer}")) >> Pull.output(Chunk(GeneralizedNetworkMessage.fromProto(buffer.toArray).get)) >> Pull.done
+        case Some((hd, tailStream)) => Pull.eval(Logger[F].info("handshakeFromBytes1")) >> concatPull(tailStream, Chunk.concat(List(buffer, hd)))
+        case None => Pull.eval(Logger[F].info(s"handshakeFromBytes2. ${buffer}")) >> Pull.output(Chunk(GeneralizedNetworkMessage.fromProto(buffer.toArray).get)) >> Pull.done
       }
     }
     concatPull(is, Chunk.empty).stream

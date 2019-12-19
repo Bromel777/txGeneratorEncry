@@ -2,8 +2,8 @@ package org.encryfoundation.transactionGenerator.utils
 
 import org.encryfoundation.common.modifiers.mempool.transaction.{Transaction, TransactionProtoSerializer}
 import org.encryfoundation.common.network.BasicMessagesRepo.{InvNetworkMessage, ModifiersNetworkMessage, NetworkMessage}
-import org.encryfoundation.transactionGenerator.services.TransactionService.Message
-import org.encryfoundation.transactionGenerator.services.TransactionService.Messages.TransactionForNetwork
+import org.encryfoundation.transactionGenerator.programs.TransactionProgram.Message
+import org.encryfoundation.transactionGenerator.programs.TransactionProgram.Messages.TransactionForNetwork
 
 object Casting {
 
