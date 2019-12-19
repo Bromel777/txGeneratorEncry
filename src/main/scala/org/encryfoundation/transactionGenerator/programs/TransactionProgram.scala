@@ -1,17 +1,17 @@
 package org.encryfoundation.transactionGenerator.programs
 
 import cats.effect.concurrent.Ref
-import cats.effect.{Concurrent, ConcurrentEffect, ContextShift, IO, Resource, Sync, Timer}
+import cats.effect.{Concurrent, ConcurrentEffect, Resource, Sync, Timer}
 import cats.implicits._
 import fs2.Stream
-import fs2.concurrent.Topic
+import fs2.concurrent.Queue
 import io.chrisdavenport.log4cats.Logger
 import org.encryfoundation.common.crypto.PrivateKey25519
 import org.encryfoundation.common.modifiers.mempool.transaction.Transaction
 import org.encryfoundation.common.modifiers.state.box.AssetBox
+import org.encryfoundation.common.network.BasicMessagesRepo.{InvNetworkMessage, ModifiersNetworkMessage, NetworkMessage, RequestModifiersNetworkMessage}
+import org.encryfoundation.common.utils.TaggedTypes.ModifierId
 import org.encryfoundation.transactionGenerator.pipes.TransactionPipes
-import org.encryfoundation.transactionGenerator.programs.TransactionProgram.Message
-import org.encryfoundation.transactionGenerator.programs.TransactionProgram.Messages.TransactionForNetwork
 import org.encryfoundation.transactionGenerator.services.ExplorerService
 import org.encryfoundation.transactionGenerator.settings.GeneratorSettings.LoadSettings
 
@@ -30,51 +30,83 @@ object TransactionProgram {
     case class TransactionForNetwork(tx: Transaction) extends Message
   }
 
-  private class Live[F[_]: Timer: Concurrent : Logger](startPoint: Ref[F, Int],
+  private class Live[F[_]: Timer: Concurrent : Logger](startPointRef: Ref[F, Int],
                                                        contractHash: String,
                                                        privateKey: PrivateKey25519,
                                                        boxesQty: Int,
                                                        settings: LoadSettings,
-                                                       topicToReqAndResService: Topic[F, Message],
+                                                       txsMapRef: Ref[F, Map[ModifierId, Transaction]],
+                                                       networkInMsgQueue: Queue[F, NetworkMessage],
+                                                       networkOutMsgQueue: Queue[F, NetworkMessage],
                                                        explorerService: ExplorerService[F]) extends TransactionProgram[F] {
 
-    private val getNextBoxes: Stream[F, AssetBox] = for {
-      startPointVal <- Stream.eval(startPoint.get)
-      boxesList     <- Stream.eval(explorerService.getBoxesInRange(contractHash, startPointVal, startPointVal + boxesQty))
-      _             <- Stream.eval(
-                         if (boxesList.length < boxesQty) startPoint.set(0)
-                         else startPoint.set(startPointVal + boxesQty)
-                       )
-      _             <- Stream.eval(Logger[F].info(s"get ${boxesList.size} boxes"))
-      boxes         <- Stream.emits(boxesList.map(_.asInstanceOf[AssetBox]))
-    } yield boxes
+    private val nextTxs = for {
+      startPoint <- startPointRef.get
+      boxes      <- explorerService
+                    .getBoxesInRange(contractHash, startPoint, startPoint + boxesQty)
+      _          <- if (boxes.length < boxesQty) startPointRef.set(0)
+                    else startPointRef.set(startPoint + boxesQty)
+    } yield (boxes.map(bx =>
+      TransactionPipes.fromBxToTx(
+        privateKey,
+        1,
+        bx.asInstanceOf[AssetBox])
+    ))
 
-    override val start: Stream[F, Unit] =
-      topicToReqAndResService.publish(
-        getNextBoxes.through(TransactionPipes.fromBx2Tx(
-          privateKey,
-          1
-        )).map(tx => TransactionForNetwork(tx)).evalTap(tx => Logger[F].info(s"send tx: ${tx}. ${(1/settings.tps)}")).repeat.metered((1/settings.tps) seconds)
-      ).handleErrorWith { err =>
-        Stream.eval(Logger[F].error(s"Network service err ${err}")) >> Stream.empty
+    private val txsStream = Stream.evals(nextTxs)
+      .evalMap { tx =>
+        txsMapRef.update(_ + (tx.id -> tx)) >> networkOutMsgQueue.enqueue1(
+          InvNetworkMessage(Transaction.modifierTypeId, List(tx.id))
+        )
+      }.repeat
+      .metered((1 / settings.tps) seconds)
+
+    private val addReqToTx: ModifierId => F[Unit] = id => for {
+      txsMap <- txsMapRef.get
+      tx     <- txsMap.find(_._1 sameElements id).traverse { case (_, tx) =>
+        networkOutMsgQueue.enqueue1(
+          ModifiersNetworkMessage(
+            Transaction.modifierTypeId -> Map((tx.id -> tx.bytes))
+          )
+        )
       }
+    } yield ()
+
+    private val addRequest: NetworkMessage => F[Unit] = {
+      case RequestModifiersNetworkMessage((typeId, ids)) if typeId == Transaction.modifierTypeId =>
+        ids.toList.traverse(addReqToTx) >> Sync[F].unit
+      case msg => Logger[F].warn(s"Got msg ${msg} from network")
+    }
+
+
+    private val responseStream = for {
+      msg   <- networkInMsgQueue.dequeue
+      _     <- Stream.eval(addRequest(msg))
+    } yield ()
+
+    override val start: Stream[F, Unit] = txsStream concurrently responseStream
+
   }
 
   def apply[F[_]: Timer: Concurrent: Logger : ConcurrentEffect](contractHash: String,
                                                                 privateKey: PrivateKey25519,
                                                                 boxesQty: Int,
                                                                 settings: LoadSettings,
-                                                                topicToReqAndResService: Topic[F, Message]): Resource[F, TransactionProgram[F]] =
+                                                                networkInMsgQueue: Queue[F, NetworkMessage],
+                                                                networkOutMsgQueue: Queue[F, NetworkMessage]): Resource[F, TransactionProgram[F]] =
     ExplorerService[F].evalMap( explorerService =>
       for {
         startPoint <- Ref.of[F, Int](0)
+        txsMap     <- Ref.of[F, Map[ModifierId, Transaction]](Map.empty[ModifierId, Transaction])
       } yield new Live(
         startPoint,
         contractHash,
         privateKey,
         boxesQty,
         settings,
-        topicToReqAndResService,
+        txsMap,
+        networkInMsgQueue,
+        networkOutMsgQueue,
         explorerService
       )
     )

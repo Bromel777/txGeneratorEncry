@@ -28,7 +28,7 @@ final class TestApp[F[_]: ContextShift : Timer:
   }
 
   private def subprograms = for {
-        networkProgram            <- NetworkProgram (
+        networkProgram            <- NetworkProgram(
                                        config.networkSettings.peers,
                                        Port(config.networkSettings.bindPort).get,
                                        netOutTopic,
