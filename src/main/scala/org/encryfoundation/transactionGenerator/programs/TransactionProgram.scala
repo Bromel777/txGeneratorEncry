@@ -10,6 +10,7 @@ import org.encryfoundation.common.crypto.PrivateKey25519
 import org.encryfoundation.common.modifiers.mempool.transaction.Transaction
 import org.encryfoundation.common.modifiers.state.box.AssetBox
 import org.encryfoundation.common.network.BasicMessagesRepo.{InvNetworkMessage, ModifiersNetworkMessage, NetworkMessage, RequestModifiersNetworkMessage}
+import org.encryfoundation.common.utils.Algos
 import org.encryfoundation.common.utils.TaggedTypes.ModifierId
 import org.encryfoundation.transactionGenerator.pipes.TransactionPipes
 import org.encryfoundation.transactionGenerator.services.ExplorerService
@@ -63,12 +64,13 @@ object TransactionProgram {
 
     private val addReqToTx: ModifierId => F[Unit] = id => for {
       txsMap <- txsMapRef.get
-      tx     <- txsMap.find(_._1 sameElements id).traverse { case (_, tx) =>
+      _      <- Logger[F].info(s"Try to find tx with id: ${Algos.encode(id)}")
+      _     <- txsMap.find(_._1 sameElements id).traverse { case (_, tx) =>
         networkOutMsgQueue.enqueue1(
           ModifiersNetworkMessage(
             Transaction.modifierTypeId -> Map((tx.id -> tx.bytes))
           )
-        )
+        ) >> Logger[F].info("Tx found!")
       }
     } yield ()
 
@@ -79,12 +81,9 @@ object TransactionProgram {
     }
 
 
-    private val responseStream = for {
-      msg   <- networkInMsgQueue.dequeue
-      _     <- Stream.eval(addRequest(msg))
-    } yield ()
+    private val responseStream = networkInMsgQueue.dequeue.evalMap(addRequest)
 
-    override val start: Stream[F, Unit] = txsStream concurrently responseStream
+    override val start: Stream[F, Unit] = responseStream concurrently txsStream
 
   }
 

@@ -3,7 +3,7 @@ package org.encryfoundation.transactionGenerator.programs
 import java.net.InetSocketAddress
 
 import cats.effect.concurrent.Ref
-import cats.effect.{Blocker, Concurrent, ContextShift, IO, Resource, Sync, Timer}
+import cats.effect.{Blocker, Clock, Concurrent, ContextShift, IO, Resource, Sync, Timer}
 import cats.implicits._
 import com.comcast.ip4s._
 import fs2.Stream
@@ -35,12 +35,12 @@ object NetworkProgram {
                      connectBuffer: Queue[F, SocketAddress[Ipv4Address]],
                      disconnectBuffer: Queue[F, SocketService[F]],
                      port: Port,
-                     networkOutTopic: Topic[F, NetworkMessage],
-                     networkInTopic: Topic[F, NetworkMessage]) extends NetworkProgram[F] {
+                     networkOutMsgQueue: Queue[F, NetworkMessage],
+                     networkInMsgQueue: Queue[F, NetworkMessage]) extends NetworkProgram[F] {
 
     private val subscribe: Stream[F, Unit] = for {
-      msg       <- networkOutTopic.subscribe(100)
-      _         <- Stream.eval(Logger[F].info(s"get msg from topic: ${msg}"))
+      msg       <- networkOutMsgQueue.dequeue
+      _         <- Stream.eval(Logger[F].info(s"Should write to network: ${msg}"))
       peers     <- Stream.eval(connectedPeers.get)
       _         <- Stream.eval(Logger[F].info(s"peers: ${peers}"))
       peerRes   <- Stream.emits(peers.values.toList)
@@ -63,8 +63,7 @@ object NetworkProgram {
       _             <- Stream.eval(connectedPeers.update(_.updated(peerToConnect, handlerRes)))
       msg           <- handlerRes.read
       _             <- Stream.eval(Logger[F].info(s"get msg: $msg"))
-      _             <- Stream.eval(networkInTopic.publish1(msg))
-    } yield ()).repeat.metered(5 seconds)
+    } yield msg).through(networkInMsgQueue.enqueue)
 
     override def start: Stream[F, Unit] = {
       startServer concurrently connect concurrently subscribe
@@ -75,16 +74,16 @@ object NetworkProgram {
 
   def apply[F[_]: Concurrent : ContextShift : Timer: Logger](initPeers: List[SocketAddress[Ipv4Address]],
                                                              port: Port,
-                                                             networkOutTopic: Topic[F, NetworkMessage],
-                                                             networkInTopic: Topic[F, NetworkMessage]): Resource[F, NetworkProgram[F]] =
+                                                             networkOutQueue: Queue[F, NetworkMessage],
+                                                             networkInQueue: Queue[F, NetworkMessage]): Resource[F, NetworkProgram[F]] =
     Blocker[F].flatMap { blocker =>
       SocketGroup[F](blocker).evalMap { socketGroup =>
         for {
           connectBuffer <- Queue.bounded[F, SocketAddress[Ipv4Address]](100)
-          _             <- initPeers.traverse(connectBuffer.enqueue1)
+          _             <- initPeers.traverse(connectBuffer.enqueue1) >> Logger[F].info("peers!")
           disconnectBuffer <- Queue.bounded[F, SocketService[F]](100)
           peers <- Ref.of[F, Map[SocketAddress[Ipv4Address], SocketService[F]]](Map.empty)
-        } yield (new Live(socketGroup, peers, connectBuffer, disconnectBuffer, port, networkOutTopic, networkInTopic))
+        } yield (new Live(socketGroup, peers, connectBuffer, disconnectBuffer, port, networkOutQueue, networkInQueue))
       }
     }
 

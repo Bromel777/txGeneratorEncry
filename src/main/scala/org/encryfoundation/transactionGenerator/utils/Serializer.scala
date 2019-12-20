@@ -24,10 +24,12 @@ object Serializer extends StrictLogging {
               case Some(msgSize) =>
                 if ((buffer.size + hd.size) >= msgSize) {
                   Pull.eval(Logger[F].info(s"Chunk.concat(Seq(buffer, hd.take(msgSize - buffer.size))).toArray): " +
-                    s"${Chunk.concat(Seq(buffer, hd.take(msgSize - buffer.size))).toArray[Byte]}")) >>
+                    s"${Chunk.concat(Seq(buffer, hd.take(msgSize - buffer.size))).toArray}. Hd: ${hd.getClass}. ${
+                      Chunk.concat(Seq(buffer, hd.take(msgSize - buffer.size))).size
+                    }")) >>
                   Pull.output(
                     Chunk(GeneralizedNetworkMessage.fromProto(
-                      Chunk.concat(Seq(buffer, hd.take(msgSize - buffer.size))).toArray[Byte]).get
+                      Chunk.concat(Seq(buffer, hd.take(msgSize - buffer.size))).toArray).get
                     )
                   ) >> deser(tail, hd.drop(msgSize - buffer.size), msgSizeBuf = None, Chunk.empty)
                 }
