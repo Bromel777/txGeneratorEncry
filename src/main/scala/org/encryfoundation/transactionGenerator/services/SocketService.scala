@@ -31,8 +31,9 @@ object SocketService {
     private val readAnotherMessages = {
       val readSocket = socket.reads(1024).through(Serializer.fromBytes)
       val writeOutput = msgQueue.dequeue
+        .evalTap(msg => Logger[F].info(s"Write to socket ${msg}"))
         .through(Serializer.toBytes)
-        .through(socket.writes(None)) >> Stream.eval(Logger[F].info("Write to socket"))
+        .through(socket.writes(None))
       readSocket concurrently writeOutput
     }
 
