@@ -65,14 +65,17 @@ object TransactionProgram {
     private val addReqToTx: ModifierId => F[Unit] = id => for {
       txsMap <- txsMapRef.get
       _      <- Logger[F].info(s"Try to find tx with id: ${Algos.encode(id)}")
-      _     <- txsMap.find(_._1 sameElements id).traverse { case (_, tx) =>
+      _     <-  addTxToOutcomingQueue(txsMap, id)
+    } yield ()
+
+    private def addTxToOutcomingQueue(txsMap: Map[ModifierId, Transaction], txId: ModifierId): F[Option[Unit]] =
+      txsMap.find(_._1 sameElements txId).traverse { case (_, tx) =>
         networkOutMsgQueue.enqueue1(
           ModifiersNetworkMessage(
             Transaction.modifierTypeId -> Map((tx.id -> tx.bytes))
           )
         ) >> Logger[F].info("Tx found!")
       }
-    } yield ()
 
     private val addRequest: NetworkMessage => F[Unit] = {
       case RequestModifiersNetworkMessage((typeId, ids)) if typeId == Transaction.modifierTypeId =>
