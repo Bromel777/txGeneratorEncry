@@ -1,5 +1,6 @@
 package org.encryfoundation.transactionGenerator.programs
 
+import cats.Applicative
 import cats.effect.concurrent.Ref
 import cats.effect.{Concurrent, ConcurrentEffect, Resource, Sync, Timer}
 import cats.implicits._
@@ -43,8 +44,7 @@ object TransactionProgram {
 
     private val nextTxs = for {
       startPoint <- startPointRef.get
-      boxes      <- explorerService
-                    .getBoxesInRange(contractHash, startPoint, startPoint + boxesQty)
+      boxes      <- explorerService.getBoxesInRange(contractHash, startPoint, startPoint + boxesQty)
       _          <- if (boxes.length < boxesQty) startPointRef.set(0)
                     else startPointRef.set(startPoint + boxesQty)
     } yield (boxes.map(bx =>
@@ -54,19 +54,16 @@ object TransactionProgram {
         bx.asInstanceOf[AssetBox])
     ))
 
-    private val txsStream = Stream.evals(nextTxs)
-      .evalMap { tx =>
-        txsMapRef.update(_ + (tx.id -> tx)) >> networkOutMsgQueue.enqueue1(
-          InvNetworkMessage(Transaction.modifierTypeId, List(tx.id))
-        )
-      }.repeat
-      .metered((1 / settings.tps) seconds)
-
     private val addReqToTx: ModifierId => F[Unit] = id => for {
       txsMap <- txsMapRef.get
       _      <- Logger[F].info(s"Try to find tx with id: ${Algos.encode(id)}")
       _     <-  addTxToOutcomingQueue(txsMap, id)
     } yield ()
+
+    private def sendInvForTx(tx: Transaction): F[Unit] =
+      txsMapRef.update(_ + (tx.id -> tx)) >> networkOutMsgQueue.enqueue1(
+        InvNetworkMessage(Transaction.modifierTypeId, List(tx.id))
+      )
 
     private def addTxToOutcomingQueue(txsMap: Map[ModifierId, Transaction], txId: ModifierId): F[Option[Unit]] =
       txsMap.find(_._1 sameElements txId).traverse { case (_, tx) =>
@@ -79,12 +76,15 @@ object TransactionProgram {
 
     private val addRequest: NetworkMessage => F[Unit] = {
       case RequestModifiersNetworkMessage((typeId, ids)) if typeId == Transaction.modifierTypeId =>
-        ids.toList.traverse(addReqToTx) >> Sync[F].unit
+        ids.toList.traverse(addReqToTx) >> Applicative[F].unit
       case msg => Logger[F].warn(s"Got msg ${msg} from network")
     }
 
-
     private val responseStream = networkInMsgQueue.dequeue.evalMap(addRequest)
+
+    private val txsStream = Stream.evals(nextTxs)
+      .evalMap(sendInvForTx).repeat
+      .metered((1 / settings.tps) seconds)
 
     override val start: Stream[F, Unit] = responseStream concurrently txsStream
 
