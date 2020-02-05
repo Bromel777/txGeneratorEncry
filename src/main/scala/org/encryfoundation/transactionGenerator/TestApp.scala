@@ -38,6 +38,7 @@ final class TestApp[F[_]: ContextShift : Timer:
                                        privKey,
                                        100,
                                        config.loadSettings,
+                                       config.explorerSettings,
                                        netInQueue,
                                        netOutQueue
                                       )

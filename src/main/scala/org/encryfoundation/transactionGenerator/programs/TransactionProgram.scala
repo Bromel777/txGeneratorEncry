@@ -15,7 +15,7 @@ import org.encryfoundation.common.utils.Algos
 import org.encryfoundation.common.utils.TaggedTypes.ModifierId
 import org.encryfoundation.transactionGenerator.pipes.TransactionPipes
 import org.encryfoundation.transactionGenerator.services.ExplorerService
-import org.encryfoundation.transactionGenerator.settings.GeneratorSettings.LoadSettings
+import org.encryfoundation.transactionGenerator.settings.GeneratorSettings.{ExplorerSettings, LoadSettings}
 
 import scala.concurrent.duration._
 
@@ -36,7 +36,8 @@ object TransactionProgram {
                                                        contractHash: String,
                                                        privateKey: PrivateKey25519,
                                                        boxesQty: Int,
-                                                       settings: LoadSettings,
+                                                       loadSettings: LoadSettings,
+                                                       explorerSettings: ExplorerSettings,
                                                        txsMapRef: Ref[F, Map[ModifierId, Transaction]],
                                                        networkInMsgQueue: Queue[F, NetworkMessage],
                                                        networkOutMsgQueue: Queue[F, NetworkMessage],
@@ -47,12 +48,12 @@ object TransactionProgram {
       boxes      <- explorerService.getBoxesInRange(contractHash, startPoint, startPoint + boxesQty)
       _          <- if (boxes.length < boxesQty) startPointRef.set(0)
                     else startPointRef.set(startPoint + boxesQty)
-    } yield (boxes.map(bx =>
+    } yield (boxes.collect { case bx: AssetBox if bx.amount > 1 =>
       TransactionPipes.fromBxToTx(
         privateKey,
         1,
-        bx.asInstanceOf[AssetBox])
-    ))
+        bx.asInstanceOf[AssetBox] )
+    })
 
     private val addReqToTx: ModifierId => F[Unit] = id => for {
       txsMap <- txsMapRef.get
@@ -84,7 +85,7 @@ object TransactionProgram {
 
     private val txsStream = Stream.evals(nextTxs)
       .evalMap(sendInvForTx).repeat
-      .metered((1 / settings.tps) seconds)
+      .metered((1 / loadSettings.tps) seconds)
 
     override val start: Stream[F, Unit] = responseStream concurrently txsStream
 
@@ -93,10 +94,11 @@ object TransactionProgram {
   def apply[F[_]: Timer: Concurrent: Logger : ConcurrentEffect](contractHash: String,
                                                                 privateKey: PrivateKey25519,
                                                                 boxesQty: Int,
-                                                                settings: LoadSettings,
+                                                                loadSettings: LoadSettings,
+                                                                explorerSettings: ExplorerSettings,
                                                                 networkInMsgQueue: Queue[F, NetworkMessage],
                                                                 networkOutMsgQueue: Queue[F, NetworkMessage]): Resource[F, TransactionProgram[F]] =
-    ExplorerService[F].evalMap( explorerService =>
+    ExplorerService[F](explorerSettings).evalMap( explorerService =>
       for {
         startPoint <- Ref.of[F, Int](0)
         txsMap     <- Ref.of[F, Map[ModifierId, Transaction]](Map.empty[ModifierId, Transaction])
@@ -105,7 +107,8 @@ object TransactionProgram {
         contractHash,
         privateKey,
         boxesQty,
-        settings,
+        loadSettings,
+        explorerSettings,
         txsMap,
         networkInMsgQueue,
         networkOutMsgQueue,
