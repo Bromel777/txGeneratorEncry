@@ -8,7 +8,7 @@ import fs2.Stream
 import fs2.concurrent.Queue
 import io.chrisdavenport.log4cats.Logger
 import org.encryfoundation.common.crypto.PrivateKey25519
-import org.encryfoundation.common.modifiers.mempool.transaction.Transaction
+import org.encryfoundation.common.modifiers.mempool.transaction.{Transaction, TransactionProtoSerializer}
 import org.encryfoundation.common.modifiers.state.box.AssetBox
 import org.encryfoundation.common.network.BasicMessagesRepo.{InvNetworkMessage, ModifiersNetworkMessage, NetworkMessage, RequestModifiersNetworkMessage}
 import org.encryfoundation.common.utils.Algos
@@ -69,7 +69,7 @@ object TransactionProgram {
       txsMap.find(_._1 sameElements txId).traverse { case (_, tx) =>
         networkOutMsgQueue.enqueue1(
           ModifiersNetworkMessage(
-            Transaction.modifierTypeId -> Map((tx.id -> tx.bytes))
+            Transaction.modifierTypeId -> Map((tx.id -> TransactionProtoSerializer.toProto(tx).toByteArray))
           )
         ) >> Logger[F].info("Tx found!")
       }

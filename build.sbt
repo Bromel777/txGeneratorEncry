@@ -33,7 +33,7 @@ libraryDependencies ++= Seq(
   "com.iheart" %% "ficus" % "1.4.2",
   "com.typesafe" % "config" % "1.3.3",
   "org.iq80.leveldb" % "leveldb" % "0.9",
-  "org.encry" %% "encry-common" % "0.9.2",
+  "org.encry" %% "encry-common" % "0.9.3",
   "com.google.guava" % "guava" % "27.1-jre",
   "co.fs2" %% "fs2-core" % "2.1.0",
   "co.fs2" %% "fs2-io" % "2.1.0",
