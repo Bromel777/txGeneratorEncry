@@ -1,6 +1,6 @@
 package org.encryfoundation.transactionGenerator.programs
 
-import cats.Applicative
+import cats.{Applicative, ApplicativeError}
 import cats.effect.concurrent.Ref
 import cats.effect.{Concurrent, ConcurrentEffect, Resource, Sync, Timer}
 import cats.implicits._
@@ -16,7 +16,6 @@ import org.encryfoundation.common.utils.TaggedTypes.ModifierId
 import org.encryfoundation.transactionGenerator.pipes.TransactionPipes
 import org.encryfoundation.transactionGenerator.services.ExplorerService
 import org.encryfoundation.transactionGenerator.settings.GeneratorSettings.{ExplorerSettings, LoadSettings}
-
 import scala.concurrent.duration._
 
 trait TransactionProgram[F[_]] {
@@ -43,7 +42,7 @@ object TransactionProgram {
                                                        networkOutMsgQueue: Queue[F, NetworkMessage],
                                                        explorerService: ExplorerService[F]) extends TransactionProgram[F] {
 
-    private val nextTxs = for {
+    private val nextTxs: F[List[Transaction]] = for {
       startPoint <- startPointRef.get
       boxes      <- explorerService.getBoxesInRange(contractHash, startPoint, startPoint + boxesQty)
       _          <- if (boxes.length < boxesQty) startPointRef.set(0)
@@ -84,8 +83,10 @@ object TransactionProgram {
     private val responseStream = networkInMsgQueue.dequeue.evalMap(addRequest)
 
     private val txsStream = Stream.evals(nextTxs)
-      .evalMap(sendInvForTx).repeat
+      .evalMap(sendInvForTx)
+      .repeat
       .metered((1 / loadSettings.tps) seconds)
+      .handleErrorWith{ h => Stream.eval(Logger[F].warn(s"Error: ${h}. During txs sending pipeline"))}
 
     override val start: Stream[F, Unit] = responseStream concurrently txsStream
 

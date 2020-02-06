@@ -13,8 +13,6 @@ import io.chrisdavenport.log4cats.Logger
 import org.encryfoundation.common.network.BasicMessagesRepo.{Handshake, NetworkMessage}
 import org.encryfoundation.transactionGenerator.services.SocketService
 
-import scala.concurrent.duration._
-
 trait NetworkProgram[F[_]] {
 
   def start: Stream[F, Unit]
@@ -55,15 +53,18 @@ object NetworkProgram {
       _           <- socketGroup.server(new InetSocketAddress(port.value))
     } yield ()
 
-    private val connect = (for {
-      peerToConnect <- connectBuffer.dequeue
-      _             <- Stream.eval(Logger[F].info(s"Connect to ${peerToConnect}"))
-      handlerRes    <- Stream.resource(SocketService(socketGroup, peerToConnect))
+    private def handleConnection(handlerRes: Resource[F, SocketService[F]], peerToConnect: SocketAddress[Ipv4Address]): Stream[F, Unit] = (for {
+      handlerRes    <- Stream.resource(handlerRes)
       _             <- Stream.eval(handlerRes.write(dummyHandshake))
       _             <- Stream.eval(connectedPeers.update(_.updated(peerToConnect, handlerRes)))
       msg           <- handlerRes.read
       _             <- Stream.eval(Logger[F].info(s"get msg: $msg"))
     } yield msg).through(networkInMsgQueue.enqueue)
+
+    private val connect = (for {
+      peerToConnect <- connectBuffer.dequeue
+      _             <- Stream.eval(Logger[F].info(s"Connect to ${peerToConnect}"))
+    } yield handleConnection(SocketService(socketGroup, peerToConnect), peerToConnect)).parJoin(10)
 
     override def start: Stream[F, Unit] = {
       startServer concurrently connect concurrently subscribe
@@ -80,7 +81,7 @@ object NetworkProgram {
       SocketGroup[F](blocker).evalMap { socketGroup =>
         for {
           connectBuffer <- Queue.bounded[F, SocketAddress[Ipv4Address]](100)
-          _             <- initPeers.traverse(connectBuffer.enqueue1) >> Logger[F].info("peers!")
+          _             <- initPeers.traverse(elem => connectBuffer.enqueue1(elem) >> Logger[F].info("test")) >> Logger[F].info(s"${initPeers} peers!")
           disconnectBuffer <- Queue.bounded[F, SocketService[F]](100)
           peers <- Ref.of[F, Map[SocketAddress[Ipv4Address], SocketService[F]]](Map.empty)
         } yield (new Live(socketGroup, peers, connectBuffer, disconnectBuffer, port, networkOutQueue, networkInQueue))
