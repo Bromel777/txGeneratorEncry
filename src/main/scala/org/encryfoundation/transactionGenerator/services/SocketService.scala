@@ -55,6 +55,6 @@ object SocketService {
       Resource.make[F, SocketService[F]](
         Queue.bounded[F, NetworkMessage]( 100 ).map { queue =>
           new Live[F](socket, queue)
-        })( _.close )
+        })( _.close >> Logger[F].warn(s"Connection with ${peerIp} was closed!") )
     }
 }

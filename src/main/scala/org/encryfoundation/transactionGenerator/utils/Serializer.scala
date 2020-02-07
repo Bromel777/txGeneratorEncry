@@ -1,15 +1,12 @@
 package org.encryfoundation.transactionGenerator.utils
 
-import cats.MonadError
 import cats.effect.Sync
-import com.google.common.primitives.{Bytes, Ints}
-import fs2.{Chunk, Pipe, Pull, RaiseThrowable, Stream}
-import org.encryfoundation.common.network.BasicMessagesRepo.{GeneralizedNetworkMessage, Handshake, NetworkMessage}
 import cats.implicits._
+import com.google.common.primitives.Ints
 import com.typesafe.scalalogging.StrictLogging
+import fs2.{Chunk, Pipe, Pull, RaiseThrowable, Stream}
 import io.chrisdavenport.log4cats.Logger
-
-import scala.util.{Failure, Success}
+import org.encryfoundation.common.network.BasicMessagesRepo.{GeneralizedNetworkMessage, Handshake, NetworkMessage}
 
 object Serializer extends StrictLogging {
 

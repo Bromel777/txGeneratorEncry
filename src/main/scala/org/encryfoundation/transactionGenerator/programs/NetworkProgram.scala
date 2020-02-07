@@ -3,11 +3,11 @@ package org.encryfoundation.transactionGenerator.programs
 import java.net.InetSocketAddress
 
 import cats.effect.concurrent.Ref
-import cats.effect.{Blocker, Clock, Concurrent, ContextShift, IO, Resource, Sync, Timer}
+import cats.effect.{Blocker, Concurrent, ContextShift, Resource, Timer}
 import cats.implicits._
 import com.comcast.ip4s._
 import fs2.Stream
-import fs2.concurrent.{Queue, Topic}
+import fs2.concurrent.Queue
 import fs2.io.tcp.SocketGroup
 import io.chrisdavenport.log4cats.Logger
 import org.encryfoundation.common.network.BasicMessagesRepo.{Handshake, NetworkMessage}
@@ -58,13 +58,20 @@ object NetworkProgram {
       _             <- Stream.eval(handlerRes.write(dummyHandshake))
       _             <- Stream.eval(connectedPeers.update(_.updated(peerToConnect, handlerRes)))
       msg           <- handlerRes.read
-      _             <- Stream.eval(Logger[F].info(s"get msg: $msg"))
-    } yield msg).through(networkInMsgQueue.enqueue)
+      _             <- Stream.eval(Logger[F].info(s"get msg: ${msg.messageName}"))
+    } yield msg)
+      .through(networkInMsgQueue.enqueue)
+      .handleErrorWith(
+        e => Stream.eval(
+          Logger[F].error(e)(s"Error occurred during working with node ${peerToConnect}")
+        )
+      ).onFinalize(Logger[F].warn(s"Delete peer ${peerToConnect} from peers list") >> connectedPeers.update(map => map - peerToConnect))
 
     private val connect = (for {
       peerToConnect <- connectBuffer.dequeue
       _             <- Stream.eval(Logger[F].info(s"Connect to ${peerToConnect}"))
-    } yield handleConnection(SocketService(socketGroup, peerToConnect), peerToConnect)).parJoin(10)
+    } yield handleConnection(SocketService(socketGroup, peerToConnect), peerToConnect))
+      .parJoinUnbounded
 
     override def start: Stream[F, Unit] = {
       startServer concurrently connect concurrently subscribe

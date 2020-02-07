@@ -1,22 +1,25 @@
 package org.encryfoundation.transactionGenerator.programs
 
-import cats.{Applicative, ApplicativeError}
+import cats.Applicative
 import cats.effect.concurrent.Ref
-import cats.effect.{Concurrent, ConcurrentEffect, Resource, Sync, Timer}
+import cats.effect.{Concurrent, ConcurrentEffect, Resource, Timer}
 import cats.implicits._
 import fs2.Stream
 import fs2.concurrent.Queue
 import io.chrisdavenport.log4cats.Logger
-import org.encryfoundation.common.crypto.PrivateKey25519
-import org.encryfoundation.common.modifiers.mempool.transaction.{Transaction, TransactionProtoSerializer}
-import org.encryfoundation.common.modifiers.state.box.AssetBox
+import org.encryfoundation.common.modifiers.mempool.transaction.{PubKeyLockedContract, Transaction, TransactionProtoSerializer}
+import org.encryfoundation.common.modifiers.state.box.{AssetBox, EncryBaseBox}
 import org.encryfoundation.common.network.BasicMessagesRepo.{InvNetworkMessage, ModifiersNetworkMessage, NetworkMessage, RequestModifiersNetworkMessage}
 import org.encryfoundation.common.utils.Algos
 import org.encryfoundation.common.utils.TaggedTypes.ModifierId
 import org.encryfoundation.transactionGenerator.pipes.TransactionPipes
 import org.encryfoundation.transactionGenerator.services.ExplorerService
-import org.encryfoundation.transactionGenerator.settings.GeneratorSettings.{ExplorerSettings, LoadSettings}
+import org.encryfoundation.transactionGenerator.settings.GeneratorSettings
+import org.encryfoundation.transactionGenerator.settings.GeneratorSettings.ContractHash
+import org.encryfoundation.transactionGenerator.utils.Mnemonic
+
 import scala.concurrent.duration._
+import scala.reflect.ClassTag
 
 trait TransactionProgram[F[_]] {
 
@@ -31,28 +34,38 @@ object TransactionProgram {
     case class TransactionForNetwork(tx: Transaction) extends Message
   }
 
-  private class Live[F[_]: Timer: Concurrent : Logger](startPointRef: Ref[F, Int],
-                                                       contractHash: String,
-                                                       privateKey: PrivateKey25519,
+  private class Live[F[_]: Timer: Concurrent : Logger](startPointRefs: Ref[F, Map[ContractHash, Int]],
                                                        boxesQty: Int,
-                                                       loadSettings: LoadSettings,
-                                                       explorerSettings: ExplorerSettings,
+                                                       settings: GeneratorSettings,
                                                        txsMapRef: Ref[F, Map[ModifierId, Transaction]],
                                                        networkInMsgQueue: Queue[F, NetworkMessage],
                                                        networkOutMsgQueue: Queue[F, NetworkMessage],
                                                        explorerService: ExplorerService[F]) extends TransactionProgram[F] {
 
-    private val nextTxs: F[List[Transaction]] = for {
-      startPoint <- startPointRef.get
-      boxes      <- explorerService.getBoxesInRange(contractHash, startPoint, startPoint + boxesQty)
-      _          <- if (boxes.length < boxesQty) startPointRef.set(0)
-                    else startPointRef.set(startPoint + boxesQty)
-    } yield (boxes.collect { case bx: AssetBox if bx.amount > 1 =>
-      TransactionPipes.fromBxToTx(
-        privateKey,
-        1,
-        bx.asInstanceOf[AssetBox] )
-    })
+    private val keys = settings.walletSettings.mnemonicKeys.map(mnemonic => Mnemonic.createPrivKey(Option(mnemonic)))
+
+    private val contractsHashes = keys.map(
+      key => (ContractHash @@ Algos.encode(PubKeyLockedContract(key.publicImage.pubKeyBytes).contract.hash))
+    )
+
+    private val keysMap = (contractsHashes zip keys).toMap
+
+    private val txsStream = Stream.emits(contractsHashes)
+      .evalMap(hash => getBoxes[AssetBox](hash, boxesQty))
+      .flatMap(Stream.emits)
+      .through(TransactionPipes.fromBxToTx(keysMap, 1))
+      .evalMap(sendInvForTx)
+      .metered((1 / settings.loadSettings.tps) seconds)
+      .handleErrorWith{ h => Stream.eval(Logger[F].warn(s"Error: ${h}. During txs sending pipeline"))}
+
+    private def getBoxes[T <: EncryBaseBox: ClassTag](hash: ContractHash, boxesQty: Int): F[List[T]] = for {
+      startPointsMap <- startPointRefs.get
+      contractHashStartPoint <- startPointsMap.getOrElse(hash, 0).pure[F]
+      allBoxes <- explorerService.getBoxesInRange(hash, contractHashStartPoint, contractHashStartPoint + boxesQty)
+      acceptedBoxes <- allBoxes.collect{case bx: T => bx}.pure[F]
+      _  <- startPointRefs.update(_.updated(hash, contractHashStartPoint + boxesQty))
+      additionalBoxes <- (if (boxesQty > acceptedBoxes.length) getBoxes[T](hash, boxesQty - acceptedBoxes.length) else List.empty[T].pure[F])
+    } yield acceptedBoxes ++ additionalBoxes
 
     private val addReqToTx: ModifierId => F[Unit] = id => for {
       txsMap <- txsMapRef.get
@@ -77,39 +90,27 @@ object TransactionProgram {
     private val addRequest: NetworkMessage => F[Unit] = {
       case RequestModifiersNetworkMessage((typeId, ids)) if typeId == Transaction.modifierTypeId =>
         ids.toList.traverse(addReqToTx) >> Applicative[F].unit
-      case msg => Logger[F].warn(s"Got msg ${msg} from network")
+      case msg => Logger[F].warn(s"Got msg ${msg.messageName} from network")
     }
 
     private val responseStream = networkInMsgQueue.dequeue.evalMap(addRequest)
-
-    private val txsStream = Stream.evals(nextTxs)
-      .evalMap(sendInvForTx)
-      .repeat
-      .metered((1 / loadSettings.tps) seconds)
-      .handleErrorWith{ h => Stream.eval(Logger[F].warn(s"Error: ${h}. During txs sending pipeline"))}
 
     override val start: Stream[F, Unit] = responseStream concurrently txsStream
 
   }
 
-  def apply[F[_]: Timer: Concurrent: Logger : ConcurrentEffect](contractHash: String,
-                                                                privateKey: PrivateKey25519,
-                                                                boxesQty: Int,
-                                                                loadSettings: LoadSettings,
-                                                                explorerSettings: ExplorerSettings,
+  def apply[F[_]: Timer: Concurrent: Logger : ConcurrentEffect](boxesQty: Int,
+                                                                settings: GeneratorSettings,
                                                                 networkInMsgQueue: Queue[F, NetworkMessage],
                                                                 networkOutMsgQueue: Queue[F, NetworkMessage]): Resource[F, TransactionProgram[F]] =
-    ExplorerService[F](explorerSettings).evalMap( explorerService =>
+    ExplorerService[F](settings.explorerSettings).evalMap( explorerService =>
       for {
-        startPoint <- Ref.of[F, Int](0)
-        txsMap     <- Ref.of[F, Map[ModifierId, Transaction]](Map.empty[ModifierId, Transaction])
+        startPointsMap <- Ref.of[F, Map[ContractHash, Int]](Map.empty[ContractHash, Int])
+        txsMap         <- Ref.of[F, Map[ModifierId, Transaction]](Map.empty[ModifierId, Transaction])
       } yield new Live(
-        startPoint,
-        contractHash,
-        privateKey,
+        startPointsMap,
         boxesQty,
-        loadSettings,
-        explorerSettings,
+        settings,
         txsMap,
         networkInMsgQueue,
         networkOutMsgQueue,
