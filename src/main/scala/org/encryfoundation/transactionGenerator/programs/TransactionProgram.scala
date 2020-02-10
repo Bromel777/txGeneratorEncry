@@ -53,7 +53,8 @@ object TransactionProgram {
     private val txsStream = Stream(())
       .repeat
       .covary[F]
-      .metered((settings.loadSettings.tps.toInt) seconds)
+      .metered((settings.loadSettings.tps.toInt) second)
+      .evalMap(_ => Logger[F].info("Invoke tx stream!"))
       .evalMap(_ => newTxs(settings.loadSettings.tps.toInt))
       .handleErrorWith{ h => Stream.eval(Logger[F].warn(s"Error: ${h}. During txs sending pipeline"))}
       .onFinalize(Logger[F].info("txs stream ends"))
@@ -69,6 +70,7 @@ object TransactionProgram {
       startPointsMap <- startPointRefs.get
       contractHashStartPoint <- startPointsMap.getOrElse(hash, 0).pure[F]
       allBoxes <- explorerService.getBoxesInRange(hash, contractHashStartPoint, contractHashStartPoint + boxesQty)
+      _ <- Logger[F].info(s"Get: ${allBoxes.length}. From: ${contractHashStartPoint} to ${contractHashStartPoint + boxesQty}. boxesQty: ${boxesQty}")
       acceptedBoxes <- allBoxes.collect{case bx: T => bx}.pure[F]
       _  <- startPointRefs.update(_.updated(hash, contractHashStartPoint + boxesQty))
       additionalBoxes <- (if (boxesQty > acceptedBoxes.length) getBoxes[T](hash, boxesQty - acceptedBoxes.length) else List.empty[T].pure[F])
