@@ -36,14 +36,14 @@ object NetworkProgram {
                      networkOutMsgQueue: Queue[F, NetworkMessage],
                      networkInMsgQueue: Queue[F, NetworkMessage]) extends NetworkProgram[F] {
 
-    private val subscribe: Stream[F, Unit] = for {
+    private val subscribe: Stream[F, Unit] = (for {
       msg       <- networkOutMsgQueue.dequeue
       _         <- Stream.eval(Logger[F].info(s"Should write to network: ${msg}"))
       peers     <- Stream.eval(connectedPeers.get)
       _         <- Stream.eval(Logger[F].info(s"peers: ${peers}"))
       peerRes   <- Stream.emits(peers.values.toList)
       _         <- Stream.eval(peerRes.write(msg))
-    } yield ()
+    } yield ()).handleErrorWith(err => Stream.eval(Logger[F].warn(err)("Err during subscribe stream in net prog")))
 
     //todo: implement
     private val publish: Stream[F, NetworkMessage] = Stream.empty

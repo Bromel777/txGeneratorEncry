@@ -50,13 +50,20 @@ object TransactionProgram {
 
     private val keysMap = (contractsHashes zip keys).toMap
 
-    private val txsStream = Stream.emits(contractsHashes)
-      .evalMap(hash => getBoxes[AssetBox](hash, boxesQty))
-      .flatMap(Stream.emits)
-      .through(TransactionPipes.fromBxToTx(keysMap, 1))
-      .evalMap(sendInvForTx)
-      .metered((1 / settings.loadSettings.tps) seconds)
+    private val txsStream = Stream(())
+      .repeat
+      .covary[F]
+      .metered((settings.loadSettings.tps.toInt) seconds)
+      .evalMap(_ => newTxs(settings.loadSettings.tps.toInt))
       .handleErrorWith{ h => Stream.eval(Logger[F].warn(s"Error: ${h}. During txs sending pipeline"))}
+      .onFinalize(Logger[F].info("txs stream ends"))
+
+    private def newTxs(boxesQty: Int) = for {
+      hashes <- contractsHashes.pure[F]
+      bxs <- hashes.flatTraverse(hash => getBoxes[AssetBox](hash, boxesQty))
+      txs <- bxs.filter(_.amount > 1).traverse(bx => TransactionPipes.fromBxToTx(keysMap, 1, bx))
+      _   <- txs.traverse(sendInvForTx)
+    } yield ()
 
     private def getBoxes[T <: EncryBaseBox: ClassTag](hash: ContractHash, boxesQty: Int): F[List[T]] = for {
       startPointsMap <- startPointRefs.get
@@ -93,7 +100,10 @@ object TransactionProgram {
       case msg => Logger[F].warn(s"Got msg ${msg.messageName} from network")
     }
 
-    private val responseStream = networkInMsgQueue.dequeue.evalMap(addRequest)
+    private val responseStream = networkInMsgQueue.dequeue
+      .evalMap(addRequest)
+      .handleErrorWith(err => Stream.eval(Logger[F].warn(err)("Error occured during response stream in network prog")))
+      .onFinalize(Logger[F].info("responseStream in tx prog ends!"))
 
     override val start: Stream[F, Unit] = responseStream concurrently txsStream
 
