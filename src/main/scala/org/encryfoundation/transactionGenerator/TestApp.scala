@@ -1,21 +1,15 @@
 package org.encryfoundation.transactionGenerator
 
-import cats.effect.{Concurrent, ConcurrentEffect, ContextShift, ExitCode, IO, IOApp, Resource, Sync, Timer}
+import cats.effect.{ConcurrentEffect, ContextShift, ExitCode, IO, IOApp, Sync, Timer}
 import cats.implicits._
 import com.comcast.ip4s.Port
 import fs2.Stream
-import fs2.concurrent.{Queue, Topic}
-import io.chrisdavenport.log4cats.{Logger, SelfAwareStructuredLogger}
+import fs2.concurrent.Queue
+import io.chrisdavenport.log4cats.Logger
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
-import org.encryfoundation.common.modifiers.mempool.transaction.PubKeyLockedContract
-import org.encryfoundation.common.network.BasicMessagesRepo.{NetworkMessage, SyncInfoNetworkMessage}
-import org.encryfoundation.common.network.SyncInfo
-import org.encryfoundation.common.utils.Algos
-import org.encryfoundation.transactionGenerator.TestApp.{contractHash, privKey}
-import org.encryfoundation.transactionGenerator.programs.TransactionProgram.Messages.Init
+import org.encryfoundation.common.network.BasicMessagesRepo.NetworkMessage
 import org.encryfoundation.transactionGenerator.programs.{NetworkProgram, TransactionProgram}
 import org.encryfoundation.transactionGenerator.settings.GeneratorSettings
-import org.encryfoundation.transactionGenerator.utils.Mnemonic
 
 final class TestApp[F[_]: ContextShift : Timer:
                       ConcurrentEffect : Logger] private (netInQueue: Queue[F, NetworkMessage],
@@ -34,11 +28,8 @@ final class TestApp[F[_]: ContextShift : Timer:
                                        netInQueue
                                      )
         transactionGrabberProgram <- TransactionProgram(
-                                       contractHash,
-                                       privKey,
                                        100,
-                                       config.loadSettings,
-                                       config.explorerSettings,
+                                       config,
                                        netInQueue,
                                        netOutQueue
                                       )
@@ -46,10 +37,6 @@ final class TestApp[F[_]: ContextShift : Timer:
 }
 
 object TestApp extends IOApp {
-
-  val mnemonic = "index another island accuse valid aerobic little absurd bunker keep insect scissors"
-  val privKey = Mnemonic.createPrivKey(Option(mnemonic))
-  val contractHash: String = Algos.encode(PubKeyLockedContract(privKey.publicImage.pubKeyBytes).contract.hash)
 
   def apply[F[_] : ContextShift : Timer: ConcurrentEffect](): F[TestApp[F]] = for {
     netInQueue  <- Queue.bounded[F, NetworkMessage](1000)

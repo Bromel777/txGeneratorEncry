@@ -15,6 +15,6 @@ object ExplorerRequests {
                          to: Int,
                          explorerAddr: SocketAddress[Ipv4Address]) = Request[F](
     Method.GET,
-    Uri.unsafeFromString(s"http://$explorerAddr/wallet/$contractHash/boxes/0/100")
+    Uri.unsafeFromString(s"http://$explorerAddr/wallet/$contractHash/boxes/$from/$to")
   )
 }

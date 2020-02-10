@@ -1,15 +1,13 @@
 package org.encryfoundation.transactionGenerator.utils
 
-import cats.MonadError
 import cats.effect.Sync
-import com.google.common.primitives.{Bytes, Ints}
-import fs2.{Chunk, Pipe, Pull, RaiseThrowable, Stream}
-import org.encryfoundation.common.network.BasicMessagesRepo.{GeneralizedNetworkMessage, Handshake, NetworkMessage}
 import cats.implicits._
+import com.google.common.primitives.Ints
 import com.typesafe.scalalogging.StrictLogging
+import fs2.{Chunk, Pipe, Pull, RaiseThrowable, Stream}
 import io.chrisdavenport.log4cats.Logger
-
-import scala.util.{Failure, Success}
+import org.encryfoundation.common.network.BasicMessagesRepo.{GeneralizedNetworkMessage, Handshake, NetworkMessage}
+import org.encryfoundation.common.utils.Algos
 
 object Serializer extends StrictLogging {
 
@@ -24,14 +22,15 @@ object Serializer extends StrictLogging {
               case Some(msgSize) =>
                 if ((buffer.size + hd.size) >= msgSize) {
                   Pull.eval(Logger[F].info(s"Chunk.concat(Seq(buffer, hd.take(msgSize - buffer.size))).toArray): " +
-                    s"${Chunk.concat(Seq(buffer, hd.take(msgSize - buffer.size))).toArray}. Hd: ${hd.getClass}. ${
+                    s"${Algos.encode(buffer.toArray[Byte] ++ hd.take(msgSize - buffer.size).toArray[Byte])}. Hd: ${hd.getClass}. ${
                       Chunk.concat(Seq(buffer, hd.take(msgSize - buffer.size))).size
-                    }")) >>
-                  Pull.output(
+                    }. MsgSize: ${msgSize}")) >>
+                  Pull.output[F, NetworkMessage](
                     Chunk(GeneralizedNetworkMessage.fromProto(
-                      Chunk.concat(Seq(buffer, hd.take(msgSize - buffer.size))).toArray).get
+                      buffer.toArray[Byte] ++ hd.take(msgSize - buffer.size).toArray[Byte]
+                      ).get
                     )
-                  ) >> deser(tail, hd.drop(msgSize - buffer.size), msgSizeBuf = None, Chunk.empty)
+                  ) >> deser(Stream.chunk(hd.drop(msgSize - buffer.size)) ++ tail, Chunk.empty, msgSizeBuf = None, Chunk.empty)
                 }
                 else deser(tail, Chunk.concatBytes(Seq(buffer, hd)), msgSizeBuf, msgSizeChunkBuf)
               case None =>
@@ -43,15 +42,21 @@ object Serializer extends StrictLogging {
                       Ints.fromByteArray(msgSizeChunkBuf.take(4).toArray).some,
                       Chunk.empty
                     )
+                  case _ if hd.size <= 4 =>
+                    Pull.eval(Logger[F].info(s"case any. Head length: ${hd.size}")) >> deser(tail,
+                      Chunk.empty,
+                      None,
+                      Chunk.concatBytes(Seq(msgSizeChunkBuf, hd))
+                    )
                   case _ =>
-                    Pull.eval(Logger[F].info("case any")) >> deser(Stream.chunk(hd.drop(4)) ++ tail,
+                    Pull.eval(Logger[F].info(s"case any. Head length: ${hd.size}")) >> deser(Stream.chunk(hd.drop(4)) ++ tail,
                       Chunk.empty,
                       None,
                       Chunk.concatBytes(Seq(msgSizeChunkBuf, hd.take(4)))
                     )
                 }
             }
-          case None => Pull.done
+          case None => Pull.eval(Logger[F].info("case none")) >> Pull.done
         }
     }
     is => deser(is, Chunk.empty, None, Chunk.empty).stream
